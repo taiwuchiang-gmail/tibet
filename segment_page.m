@@ -24,14 +24,27 @@ function results = segment_page(imagePath, varargin)
 %       'SaveCrops'  - true/false, write crop PNGs (default true)
 %       'Visualize'  - true/false, show a figure with detected boxes (default false)
 %       'Deskew'     - true/false, correct small page rotation first (default true)
+%       'UseGPU'     - true/false, run rule-line removal and the
+%                      stroke-width distance transform on the GPU
+%                      (default: canUseGPU()). Binarization, Canny/Hough,
+%                      connected components and area opening have no
+%                      gpuArray support, and deskew rotation is kept on
+%                      the CPU to match its results exactly.
+%
+%   All non-logical arithmetic is single precision.
 
 p = inputParser;
 addParameter(p, 'OutputDir', '', @(s) ischar(s) || isstring(s));
 addParameter(p, 'SaveCrops', true, @(x) islogical(x) || isnumeric(x));
 addParameter(p, 'Visualize', false, @(x) islogical(x) || isnumeric(x));
 addParameter(p, 'Deskew', true, @(x) islogical(x) || isnumeric(x));
+addParameter(p, 'UseGPU', [], @(x) isempty(x) || islogical(x) || isnumeric(x));
 parse(p, varargin{:});
 opts = p.Results;
+useGPU = opts.UseGPU;
+if isempty(useGPU)
+    useGPU = canUseGPU();
+end
 
 [srcDir, baseName] = fileparts(imagePath);
 if strlength(string(opts.OutputDir)) == 0
@@ -50,7 +63,7 @@ end
 BW = imbinarize(gray, "global");
 ink = pick_ink_mask(BW);
 
-angle = 0;
+angle = single(0);
 if opts.Deskew
     angle = estimate_skew(ink);
     if abs(angle) > 0.05
@@ -61,12 +74,18 @@ if opts.Deskew
         % can wipe out most of the ink on already low-contrast scans.
         % The grayscale is still rotated (bilinear) separately, purely
         % for saved crop image quality.
+        % Kept on the CPU: gpuArray imrotate rounds differently at
+        % pixel boundaries, which changes a few ink pixels and with
+        % them the connected components.
         gray = imrotate(gray, angle, "bilinear", "loose");
         ink = imrotate(ink, angle, "nearest", "loose");
     end
 end
 
 [frameBox, hasFrame] = find_page_frame(ink);
+if useGPU
+    ink = gpuArray(ink);
+end
 
 if hasFrame
     x = round(frameBox(1)); y = round(frameBox(2));
@@ -92,7 +111,7 @@ if opts.SaveCrops && ~isfolder(outputDir)
 end
 
 n = height(compTable);
-results(n, 1) = struct('BoundingBox', [], 'Line', [], 'PositionInLine', [], 'FilePath', "");
+results(n, 1) = struct('BoundingBox', single([]), 'Line', single([]), 'PositionInLine', single([]), 'FilePath', "");
 
 for k = 1:n
     bb = compTable.BoundingBox(k, :);
@@ -152,10 +171,10 @@ edges = edge(ink, 'canny');
 [H, theta, ~] = hough(edges, 'RhoResolution', 0.5, 'Theta', -45:0.2:44.8);
 P = houghpeaks(H, 40, 'threshold', ceil(0.2 * max(H(:))));
 if isempty(P)
-    angle = 0;
+    angle = single(0);
     return;
 end
-angle = median(theta(P(:, 2)));
+angle = single(median(theta(P(:, 2))));
 end
 
 function cleaned = remove_rule_lines(ink)
@@ -168,7 +187,7 @@ function cleaned = remove_rule_lines(ink)
 vertLen = round(h * 0.5);
 horizLen = round(w * 0.3);
 
-rules = false(h, w);
+rules = false(h, w, 'like', ink);
 if vertLen >= 3
     rules = rules | imopen(ink, strel('line', vertLen, 90));
 end
@@ -191,9 +210,9 @@ if CC.NumObjects == 0
 end
 
 s = regionprops(CC, 'BoundingBox', 'Area', 'Perimeter');
-bbx = cat(1, s.BoundingBox);
-areas = cat(1, s.Area);
-perim = cat(1, s.Perimeter);
+bbx = single(cat(1, s.BoundingBox));
+areas = single(cat(1, s.Area));
+perim = single(cat(1, s.Perimeter));
 
 [imH, imW] = size(ink);
 coverage = (bbx(:, 3) ./ imW) .* (bbx(:, 4) ./ imH);
@@ -272,9 +291,9 @@ if CC.NumObjects == 0
 end
 
 s = regionprops(CC, 'Area', 'Extent', 'BoundingBox');
-areas = cat(1, s.Area);
-extent = cat(1, s.Extent);
-bbx = cat(1, s.BoundingBox);
+areas = single(cat(1, s.Area));
+extent = single(cat(1, s.Extent));
+bbx = single(cat(1, s.BoundingBox));
 ratio = bbx(:, 3) ./ bbx(:, 4);
 
 medArea = median(areas);
@@ -310,7 +329,7 @@ bbx = bbx(valid, :);
 lineIdx = lineIdx(valid);
 
 compTable = table(bbx, lineIdx, 'VariableNames', {'BoundingBox', 'Line'});
-compTable.PositionInLine = zeros(height(compTable), 1);
+compTable.PositionInLine = zeros(height(compTable), 1, 'single');
 
 for L = 1:numLines
     rows = find(compTable.Line == L);
@@ -332,9 +351,13 @@ function [cleaned, strokeR] = denoise_by_stroke_width(ink)
 % small to be a stroke fragment at that scale. strokeR (the half-width
 % estimate itself) is also returned for reuse as a morphological closing
 % radius by the caller.
+%
+% The distance transform runs wherever INK lives (GPU or CPU); CLEANED
+% is always returned on the CPU because bwareaopen and the connected
+% component steps after it have no gpuArray support.
 if ~any(ink(:))
-    cleaned = ink;
-    strokeR = 1;
+    cleaned = gather(ink);
+    strokeR = single(1);
     return;
 end
 
@@ -342,20 +365,21 @@ D = bwdist(~ink);
 vals = D(ink);
 vals = vals(vals > 0);
 if isempty(vals)
-    cleaned = ink;
-    strokeR = 1;
+    cleaned = gather(ink);
+    strokeR = single(1);
     return;
 end
 
-edgesR = 0:1:20;
+edgesR = single(0:20);
 counts = histcounts(vals, edgesR);
 [~, mi] = max(counts);
-modeR = edgesR(mi) + 0.5;
+modeR = edgesR(gather(mi)) + 0.5;
 strokeR = modeR;
 strokeW = 2 * modeR;
 
 floorArea = max(3, round(strokeW^2 * 0.4));
-cleaned = bwareaopen(ink, floorArea);
+% bwareaopen only accepts a double pixel count.
+cleaned = bwareaopen(gather(ink), double(floorArea));
 end
 
 function bands = detect_line_bands(mask, compHeights)
@@ -365,15 +389,15 @@ function bands = detect_line_bands(mask, compHeights)
 % descender or vowel sign from one line can dip into the next), so a
 % simple "contiguous nonzero run" split under-counts lines badly on
 % these pages -- valley-finding on the profile is far more reliable.
-rowInk = sum(mask, 2);
+rowInk = sum(single(mask), 2);
 n = numel(rowInk);
 if n == 0 || isempty(compHeights)
-    bands = zeros(0, 2);
+    bands = zeros(0, 2, 'single');
     return;
 end
 
-medH = median(compHeights);
-smoothed = smoothdata(double(rowInk), 'movmean', max(3, round(medH / 3)));
+medH = median(single(compHeights));
+smoothed = smoothdata(rowInk, 'movmean', max(3, round(medH / 3)));
 
 try
     [~, locs] = findpeaks(-smoothed, ...
@@ -383,18 +407,18 @@ catch
     % Signal Processing Toolbox unavailable: fall back to splitting on
     % contiguous all-zero row runs (coarser, but dependency-free).
     hasInk = rowInk > 0;
-    d = diff([0; hasInk(:); 0]);
-    starts = find(d == 1);
-    ends = find(d == -1) - 1;
+    d = diff([0; single(hasInk(:)); 0]);
+    starts = single(find(d == 1));
+    ends = single(find(d == -1)) - 1;
     if isempty(starts)
-        bands = zeros(0, 2);
+        bands = zeros(0, 2, 'single');
         return;
     end
     bands = [starts, ends];
     return;
 end
 
-edgesRows = [0; locs(:); n];
+edgesRows = [0; single(locs(:)); n];
 bands = [edgesRows(1:end - 1) + 1, edgesRows(2:end)];
 
 keep = (bands(:, 2) - bands(:, 1)) >= max(3, medH * 0.3);
@@ -403,7 +427,7 @@ end
 
 function lineIdx = assign_lines(bbx, bands)
 n = size(bbx, 1);
-lineIdx = zeros(n, 1);
+lineIdx = zeros(n, 1, 'single');
 centersY = bbx(:, 2) + bbx(:, 4) / 2;
 bandMid = mean(bands, 2);
 for i = 1:n

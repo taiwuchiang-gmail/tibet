@@ -19,16 +19,17 @@ if ~isfield(opts, 'Canvas'); opts.Canvas = 1400; end
 if ~isfield(opts, 'FigNum'); opts.FigNum = []; end
 if ~isfield(opts, 'Title'); opts.Title = ''; end
 
+Y = single(gather(Y));
 lo = min(Y, [], 1);
 hi = max(Y, [], 1);
-span = max(hi - lo, eps);
+span = max(hi - lo, eps('single'));
 
 canvasSize = opts.Canvas;
 thumb = opts.Thumb;
 margin = thumb;
 usable = canvasSize - 2 * margin;
 
-canvas = ones(canvasSize, canvasSize);
+canvas = ones(canvasSize, canvasSize, 'single');
 n = size(Y, 1);
 
 for i = 1:n
@@ -39,10 +40,10 @@ for i = 1:n
     if size(img, 3) == 3
         img = rgb2gray(img);
     end
-    img = im2double(img);
+    img = im2single(img);
     [h, w] = size(img);
     s = max(h, w);
-    sq = ones(s, s);
+    sq = ones(s, s, 'like', img);
     r0 = floor((s - h) / 2) + 1;
     c0 = floor((s - w) / 2) + 1;
     sq(r0:r0 + h - 1, c0:c0 + w - 1) = img;

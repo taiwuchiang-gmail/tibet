@@ -1,7 +1,7 @@
 # Tibetan Woodblock OCR — Project Summary
 
 Handoff summary for starting a Claude Code Project. Written 2026-10-17.
-Project folder: `C:\Users\taiwu\code\tibet` (MATLAB, runs locally; needs the local MATLAB install).
+Project folder: `C:\Users\tchiang\code\tibet` (MATLAB, runs locally; needs the local MATLAB install).
 
 ## Goal
 Recognize glyphs/syllables in Degé Kangyur woodblock scans (Tibetan script):
@@ -28,6 +28,17 @@ then find a way to label them.
 |---|---|---|---|---|
 | Conv AE (recon only) | 0.951 | 0.869 | 0.934 | 0.830 |
 | Conv + contrastive (netCC) | 0.992 | 0.973 | 0.987 | 0.959 |
+
+## GPU / single precision (2026-10-18, RTX A3000 6 GB, MATLAB R2026a)
+- All computation is `single`; GPU arrays are used wherever the functions support them.
+  Results match the CPU baseline: run `results/20261018_013102` gave recon MSE 0.0131, contrastive loss 0.741,
+  netCC shift 0.992 / 0.979, scale 0.988 / 0.965.
+- `augment_glyph.m` is now batched (one bilinear warp for the whole minibatch on the GPU): contrastive
+  batch build 290 ms → 8 ms, 60 contrastive epochs in ~28 s.
+- `segment_page.m` (`'UseGPU'` option) reproduces all 12,994 existing crops bit-for-bit. Only `imopen` and `bwdist` run on the GPU;
+  `imbinarize`, Canny/`hough`, `bwconncomp`, `bwareaopen` have no gpuArray support, and gpuArray `imrotate` was rejected because
+  it rounds differently and changes components. Segmentation is CPU/PNG-write bound either way.
+- No gpuArray support either: `tsne`, `imtranslate` (single), grayscale `imdilate`/`imerode`. `bwareaopen` needs a double P.
 
 ## Key findings
 1. Segmentation fragmentation on real scans is a **scan-quality** problem (faint/broken strokes), not a bug —

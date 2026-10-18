@@ -22,7 +22,7 @@ for k = 1:num_of_lines
     %plot(xy(2,1),xy(2,2),'x','LineWidth',1,'Color','red');
     
     %Determine the endpoints of the longest line segment
-    len = norm(lines(k).point1 - lines(k).point2);
+    len = norm(single(lines(k).point1 - lines(k).point2));
     if ( len > max_len)
         max_len = len;
         xy_long = xy;
@@ -37,8 +37,8 @@ end
 [height, width] = size(BW1);
 C = nchoosek(1:num_of_lines,2);
 num_of_permu = size(C);
-X=[];
-Y=[];
+X = zeros(1, 0, 'single');
+Y = zeros(1, 0, 'single');
 for i=1 : num_of_permu(1)
     [x, y] = line_intersect_coord(lines(C(i,1)), lines(C(i,2)));
     if (isfinite(x) && isfinite(y))
@@ -76,21 +76,20 @@ figure(10); imshow(BW_crop, []);
 
 CC = bwconncomp(BW_crop,4);
 
-BW2=zeros(size(BW_crop));
+BW2 = zeros(size(BW_crop), 'single');
 
 s = regionprops(CC,"Area","Extent","BoundingBox");
-areas = cat(1,s.Area);
-extent = cat(1,s.Extent);
-bbx = cat(1,s.BoundingBox);
+areas = single(cat(1,s.Area));
+extent = single(cat(1,s.Extent));
+bbx = single(cat(1,s.BoundingBox));
 ratio = bbx(:,3)./bbx(:,4);
 idx = find(areas>30 & areas<500 & ratio>.1 & ratio<10 & extent>0.1 & bbx(:,3)<100 & bbx(:,4)<100 & (bbx(:,3).*bbx(:,4))>50);
 
-BBX = [];
 len = length(idx);
 for k = 1: len
     BW2(CC.PixelIdxList{idx(k)}) = 1;
-    BBX = [BBX; bbx(idx,:)];
 end
+BBX = bbx(idx,:);
 figure(2); imshow(insertShape(BW2,"rectangle",BBX,LineWidth=1, Color=[0 255 0]), []);
 
 

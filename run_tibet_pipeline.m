@@ -75,6 +75,9 @@ end
 
 close all;
 rng(cfg.seed);
+if useGPU
+    gpurng(cfg.seed);
+end
 timings = struct();
 fprintf('=== Tibetan glyph pipeline | %s | quick=%d | GPU=%d ===\n', stamp, cfg.quick, useGPU);
 fprintf('Results folder: %s\n', outDir);
@@ -121,27 +124,32 @@ netFC = [];
 if cfg.runFCBaseline
     t0 = tic;
     [Xn, ~] = load_crop_dataset({fullfile(projDir, '1-1-2b_crops'), fullfile(projDir, 'samples_adarshah_crops')}, sz, cfg.fcMaxSamples);
+    Xn = Xn';
+    if useGPU
+        Xn = gpuArray(Xn);
+    end
     fcOpts = trainingOptions('adam', ...
         'MaxEpochs', cfg.fcEpochs, 'MiniBatchSize', 256, 'InitialLearnRate', 5e-3, ...
         'LearnRateSchedule', 'piecewise', 'LearnRateDropPeriod', 100, 'LearnRateDropFactor', 0.5, ...
         'Shuffle', 'every-epoch', 'Verbose', false, 'Plots', 'none');
-    netFC = trainnet(Xn', Xn', build_fc_autoencoder(sz * sz), "mse", fcOpts);
-    recFC = to_numeric(predict(netFC, Xn'));
-    mseFC = mean((recFC(:) - double(Xn(:))).^2, 'all');
+    netFC = trainnet(Xn, Xn, build_fc_autoencoder(sz * sz), "mse", fcOpts);
+    mseFC = gather(mean((predict(netFC, Xn) - Xn).^2, 'all'));
     timings.fcBaseline = toc(t0);
-    fprintf('Stage 2: FC baseline trained on %d scan crops, recon MSE=%.5f (%.0fs)\n', size(Xn, 2), mseFC, timings.fcBaseline);
+    fprintf('Stage 2: FC baseline trained on %d scan crops, recon MSE=%.5f (%.0fs)\n', size(Xn, 1), mseFC, timings.fcBaseline);
 end
 
 %% 3. Convolutional autoencoder on clean crops
 t0 = tic;
 [Xp, metaP] = load_crop_dataset({cleanOutDir}, sz, Inf);
-imgs = single(reshape(Xp, sz, sz, 1, []));
+imgs = reshape(Xp, sz, sz, 1, []);
+if useGPU
+    imgs = gpuArray(imgs);
+end
 convOpts = trainingOptions('adam', ...
     'MaxEpochs', cfg.convEpochs, 'MiniBatchSize', 64, 'InitialLearnRate', 2e-3, ...
     'Shuffle', 'every-epoch', 'Verbose', false, 'Plots', 'none');
 [netConvT, infoConv] = trainnet(imgs, imgs, build_conv_autoencoder(sz), "mse", convOpts);
-recConv = to_numeric(predict(netConvT, imgs));
-mseConv = mean((recConv(:) - double(imgs(:))).^2, 'all');
+mseConv = gather(mean((predict(netConvT, imgs) - imgs).^2, 'all'));
 timings.convAE = toc(t0);
 fprintf('Stage 3: conv AE trained on %d clean crops, recon MSE=%.5f (%.0fs)\n', size(imgs, 4), mseConv, timings.convAE);
 
@@ -162,29 +170,30 @@ projHead = [
     fullyConnectedLayer(16, 'Name', 'proj2')
 ];
 netCC = dlnetwork([netConvT.Layers(1:bottleneckIdx); projHead]);
+if useGPU
+    netCC = to_device(netCC, @gpuArray);
+end
 
 nSamples = size(imgs, 4);
 numBatches = floor(nSamples / cfg.contrastBatch);
 avgGrad = [];
 avgSqGrad = [];
 iteration = 0;
-contrastLoss = zeros(cfg.contrastEpochs, 1);
+contrastLoss = zeros(cfg.contrastEpochs, 1, 'single');
 for epoch = 1:cfg.contrastEpochs
     order = randperm(nSamples);
-    batchLoss = zeros(numBatches, 1);
+    % Kept on the device so logging the loss doesn't force a GPU sync every iteration.
+    batchLoss = zeros(numBatches, 1, 'like', imgs);
     for b = 1:numBatches
         idx = order((b - 1) * cfg.contrastBatch + 1 : b * cfg.contrastBatch);
         dlXb = dlarray(make_contrastive_batch_img(imgs, idx), 'SSCB');
-        if useGPU
-            dlXb = gpuArray(dlXb);
-        end
         iteration = iteration + 1;
         [loss, gradients, state] = dlfeval(@contrastive_model_loss, netCC, dlXb, cfg.tau);
         netCC.State = state;
         [netCC, avgGrad, avgSqGrad] = adamupdate(netCC, gradients, avgGrad, avgSqGrad, iteration, cfg.contrastLR);
-        batchLoss(b) = to_numeric(loss);
+        batchLoss(b) = extractdata(loss);
     end
-    contrastLoss(epoch) = mean(batchLoss);
+    contrastLoss(epoch) = gather(mean(batchLoss));
     if epoch == 1 || mod(epoch, 10) == 0 || epoch == cfg.contrastEpochs
         fprintf('  contrastive epoch %3d/%d  loss=%.4f  (%.0fs)\n', epoch, cfg.contrastEpochs, contrastLoss(epoch), toc(t0));
     end
@@ -200,15 +209,16 @@ exportgraphics(figure(2), fullfile(outDir, 'fig2_contrastive_loss.png'), 'Resolu
 
 %% 5. Shift/scale invariance of each model
 t0 = tic;
-encodeConv = @(net) @(im) to_numeric(predict(net, single(reshape(im, sz, sz, 1, 1)), 'Outputs', 'bottleneck'));
+% Encoders map an sz x sz x 1 x B image batch to D x B features.
+encodeConv = @(net) @(X) squeeze(predict(net, X, 'Outputs', 'bottleneck'));
 models = {'Conv AE (recon only)', encodeConv(netConvT); 'Conv + contrastive (netCC)', encodeConv(netCC)};
 if ~isempty(netFC)
-    encodeFC = @(im) to_numeric(predict(netFC, single(im(:))', 'Outputs', 'bottleneck'));
+    encodeFC = @(X) predict(netFC, reshape(X, sz * sz, [])', 'Outputs', 'bottleneck')';
     models = [{'FC ReLU+BN (baseline)', encodeFC}; models];
 end
 invariance = struct('model', {}, 'shiftMean', {}, 'shiftWorst', {}, 'scaleMean', {}, 'scaleWorst', {});
 for m = 1:size(models, 1)
-    inv = measure_invariance(models{m, 2}, Xp, sz);
+    inv = measure_invariance(models{m, 2}, imgs);
     inv.model = models{m, 1};
     invariance(end + 1) = inv; %#ok<SAGROW>
 end
@@ -221,7 +231,8 @@ end
 
 %% 6. t-SNE of netCC features + densest-cluster montages
 t0 = tic;
-fCC = squeeze(to_numeric(predict(netCC, imgs, 'Outputs', 'bottleneck')));
+% tsne has no gpuArray support; it runs on the CPU in single.
+fCC = gather(squeeze(predict(netCC, imgs, 'Outputs', 'bottleneck')));
 rng(0);
 Ycc = tsne(fCC', 'Perplexity', 30);
 render_tsne_canvas(Ycc, metaP, struct('FigNum', 3, 'Title', 'Clean printed text: conv encoder + contrastive (netCC)'));
@@ -241,6 +252,8 @@ timings.tsne = toc(t0);
 fprintf('Stage 6: t-SNE + %d cluster montages (%.0fs)\n', numel(regions), timings.tsne);
 
 %% 7. Summary
+% Gathered so models.mat also loads on a machine without a GPU.
+netCC = to_device(netCC, @gather);
 save(fullfile(outDir, 'models.mat'), 'netFC', 'netConvT', 'netCC', 'fCC', 'Ycc', 'metaP', ...
     'invariance', 'contrastLoss', 'cfg', 'timings', '-v7.3');
 
@@ -268,11 +281,12 @@ fprintf('=== Done. Metrics, figures, models.mat and run_log.txt are in:\n    %s\
 diary off;
 
 %% Local functions
-function x = to_numeric(x)
-if isa(x, 'dlarray')
-    x = extractdata(x);
-end
-x = double(gather(x));
+function net = to_device(net, fn)
+% Move a dlnetwork's learnables and state (e.g. batchnorm statistics),
+% which dlupdate on the network alone leaves behind, with fn = @gpuArray
+% or @gather.
+net = dlupdate(fn, net);
+net.State = dlupdate(fn, net.State);
 end
 
 function net = build_fc_autoencoder(nIn)
@@ -329,63 +343,71 @@ layers = [
 net = dlnetwork(layers);
 end
 
-function inv = measure_invariance(encodeFn, Xp, sz)
+function inv = measure_invariance(encodeFn, imgs)
 % Same protocol as the interactive runs: 8 fixed clean glyphs, +/-1..3 px
 % horizontal shifts and 0.85-1.15x scaling, cosine similarity of each
-% perturbed embedding to the unperturbed one.
+% perturbed embedding to the unperturbed one. All perturbed copies are
+% built as one batch and encoded in a single call.
 rng(7);
-testIdx = randperm(size(Xp, 2), 8);
+testIdx = randperm(size(imgs, 4), 8);
 shifts = [-3 -2 -1 1 2 3];
 scales = [0.85 0.9 0.95 1.05 1.1 1.15];
-simShift = [];
-simScale = [];
-for t = testIdx
-    img0 = reshape(double(Xp(:, t)), sz, sz);
-    f0 = encodeFn(img0);
-    f0 = f0(:);
-    for s = shifts
-        f = encodeFn(imtranslate(img0, [s 0], 'FillValues', 1));
-        simShift(end + 1) = cosine_sim(f0, f(:)); %#ok<AGROW>
-    end
-    for sc = scales
-        f = encodeFn(center_on_canvas(imresize(img0, sc), sz));
-        simScale(end + 1) = cosine_sim(f0, f(:)); %#ok<AGROW>
-    end
+sz = size(imgs, 1);
+base = imgs(:, :, :, testIdx);
+
+pert = cell(1, numel(shifts) + numel(scales));
+for k = 1:numel(shifts)
+    pert{k} = shift_columns(base, shifts(k));
 end
-inv = struct('model', '', 'shiftMean', mean(simShift), 'shiftWorst', min(simShift), ...
-    'scaleMean', mean(simScale), 'scaleWorst', min(simScale));
+for k = 1:numel(scales)
+    pert{numel(shifts) + k} = center_on_canvas(imresize(base, scales(k)), sz);
 end
 
-function c = cosine_sim(a, b)
-c = dot(a, b) / (norm(a) * norm(b) + eps);
+f0 = encodeFn(base);
+F = reshape(encodeFn(cat(4, pert{:})), size(f0, 1), numel(testIdx), []);
+sims = gather(sum(f0 .* F, 1) ./ (vecnorm(f0, 2, 1) .* vecnorm(F, 2, 1) + eps('single')));
+simShift = sims(:, :, 1:numel(shifts));
+simScale = sims(:, :, numel(shifts) + 1:end);
+inv = struct('model', '', 'shiftMean', mean(simShift, 'all'), 'shiftWorst', min(simShift, [], 'all'), ...
+    'scaleMean', mean(simScale, 'all'), 'scaleWorst', min(simScale, [], 'all'));
+end
+
+function out = shift_columns(img, s)
+% Integer horizontal shift with white fill, same as imtranslate(img, [s 0], 'FillValues', 1).
+out = ones(size(img), 'like', img);
+if s > 0
+    out(:, s + 1:end, :, :) = img(:, 1:end - s, :, :);
+else
+    out(:, 1:end + s, :, :) = img(:, 1 - s:end, :, :);
+end
 end
 
 function canvas = center_on_canvas(img, sz)
-canvas = ones(sz, sz);
-[h, w] = size(img);
+[h, w, c, n] = size(img);
+canvas = ones(sz, sz, c, n, 'like', img);
 r0 = max(1, floor((sz - h) / 2) + 1);
 c0 = max(1, floor((sz - w) / 2) + 1);
 rEnd = min(sz, r0 + h - 1);
 cEnd = min(sz, c0 + w - 1);
-canvas(r0:rEnd, c0:cEnd) = img(1:(rEnd - r0 + 1), 1:(cEnd - c0 + 1));
+canvas(r0:rEnd, c0:cEnd, :, :) = img(1:(rEnd - r0 + 1), 1:(cEnd - c0 + 1), :, :);
 end
 
 function regions = find_dense_regions(Y, nRegions)
 % Greedy grid scan over the normalized t-SNE plane for the most populated
 % boxes, skipping boxes that overlap one already picked.
-Yn = (Y - min(Y, [], 1)) ./ max(max(Y, [], 1) - min(Y, [], 1), eps);
-boxSize = 0.065;
-step = 0.04;
-candidates = [];
-for cx = 0:step:(1 - boxSize)
-    for cy = 0:step:(1 - boxSize)
-        n = sum(Yn(:, 1) >= cx & Yn(:, 1) < cx + boxSize & Yn(:, 2) >= cy & Yn(:, 2) < cy + boxSize);
-        candidates(end + 1, :) = [cx cy n]; %#ok<AGROW>
-    end
-end
+Y = single(Y);
+Yn = (Y - min(Y, [], 1)) ./ max(max(Y, [], 1) - min(Y, [], 1), eps('single'));
+boxSize = single(0.065);
+step = single(0.04);
+starts = 0:step:(1 - boxSize);
+[CX, CY] = meshgrid(starts, starts); % column-major order = cx outer, cy inner
+CX = CX(:)';
+CY = CY(:)';
+inBox = Yn(:, 1) >= CX & Yn(:, 1) < CX + boxSize & Yn(:, 2) >= CY & Yn(:, 2) < CY + boxSize;
+candidates = [CX; CY; sum(single(inBox), 1)]';
 candidates = sortrows(candidates, -3);
 regions = {};
-picked = zeros(0, 2);
+picked = zeros(0, 2, 'single');
 for k = 1:size(candidates, 1)
     if numel(regions) >= nRegions || candidates(k, 3) == 0
         break;

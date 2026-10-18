@@ -18,16 +18,16 @@ N = N2 / 2;
 
 sim = (Z' * Z) / tau; % 2N x 2N cosine-similarity logits (Z columns are unit-norm)
 
-selfMask = eye(N2) * 1e9;
+% eye(...,'like',dlarray) is unsupported, so take the prototype (device +
+% precision) from Z's underlying data.
+selfMask = eye(N2, 'like', extractdata(Z(1))) * 1e9;
 logits = sim - selfMask; % exclude self-similarity from the softmax denominator
-
-posIdx = [(N + 1):N2, 1:N]; % column index of each row's positive partner
 
 m = max(logits, [], 2);
 logsumexp = m + log(sum(exp(logits - m), 2));
 
-linIdx = sub2ind([N2, N2], (1:N2)', posIdx(:));
-posLogits = logits(linIdx);
+Zpos = Z(:, [(N + 1):N2, 1:N]); % each column's positive partner
+posLogits = sum(Z .* Zpos, 1)' / tau;
 
-loss = mean(logsumexp(:) - posLogits);
+loss = mean(logsumexp - posLogits);
 end
