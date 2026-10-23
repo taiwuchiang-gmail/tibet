@@ -56,6 +56,9 @@ cfg.contrastLR     = 1e-3;
 cfg.tau            = 0.1;
 cfg.seed           = 1;
 cfg.numClusterMontages = 4;
+% Figure windows are numbered figBase + 1, 2, ...; set per dataset below
+% so running several datasets in one session keeps every run's figures open.
+cfg.figBase        = 0;
 
 override = struct();
 if exist('cfgOverride', 'var') && isstruct(cfgOverride)
@@ -72,6 +75,7 @@ if isDigits
     % updates, and bigger contrastive batches give NT-Xent more negatives.
     cfg.convEpochs = 30;
     cfg.contrastBatch = 256;
+    cfg.figBase = 100 * (1 + strcmp(cfg.dataset, 'digits_mnist'));
 end
 fn = fieldnames(override);
 for i = 1:numel(fn)
@@ -107,7 +111,6 @@ try
 catch
 end
 
-close all;
 rng(cfg.seed);
 if useGPU
     gpurng(cfg.seed);
@@ -208,13 +211,13 @@ mseConv = gather(mean((predict(netConvT, imgs) - imgs).^2, 'all'));
 timings.convAE = toc(t0);
 fprintf('Stage 3: conv AE trained on %d images (%s), recon MSE=%.5f (%.0fs)\n', size(imgs, 4), dataTitle, mseConv, timings.convAE);
 
-figure(1);
+f = open_figure(cfg, 1, 'conv AE loss');
 hConv = infoConv.TrainingHistory;
 plot(hConv.Iteration, hConv.Loss, 'Color', [0.7 0.7 0.7]); hold on;
 plot(hConv.Iteration, movmean(hConv.Loss, 25), 'r-', 'LineWidth', 2); hold off;
 xlabel('Iteration'); ylabel('MSE'); grid on;
 title('Conv autoencoder reconstruction loss');
-exportgraphics(figure(1), fullfile(outDir, 'fig1_conv_ae_loss.png'), 'Resolution', 150);
+exportgraphics(f, fullfile(outDir, 'fig1_conv_ae_loss.png'), 'Resolution', 150);
 
 %% 4. Contrastive fine-tuning of the conv encoder
 t0 = tic;
@@ -256,11 +259,11 @@ end
 timings.contrastive = toc(t0);
 fprintf('Stage 4: contrastive fine-tuning done, final loss=%.4f (%.0fs)\n', contrastLoss(end), timings.contrastive);
 
-figure(2);
+f = open_figure(cfg, 2, 'contrastive loss');
 plot(1:cfg.contrastEpochs, contrastLoss, 'o-', 'LineWidth', 1.5);
 xlabel('Epoch'); ylabel('mean NT-Xent loss'); grid on;
 title('Contrastive fine-tuning loss (conv encoder)');
-exportgraphics(figure(2), fullfile(outDir, 'fig2_contrastive_loss.png'), 'Resolution', 150);
+exportgraphics(f, fullfile(outDir, 'fig2_contrastive_loss.png'), 'Resolution', 150);
 
 %% 5. Shift/scale invariance of each model
 t0 = tic;
@@ -290,18 +293,19 @@ t0 = tic;
 fCC = gather(squeeze(predict(netCC, imgs, 'Outputs', 'bottleneck')));
 rng(0);
 Ycc = tsne(fCC', 'Perplexity', 30);
-render_tsne_canvas(Ycc, metaP, struct('FigNum', 3, 'Title', [dataTitle ': conv encoder + contrastive (netCC)']));
-exportgraphics(figure(3), fullfile(outDir, 'fig3_tsne_netCC.png'), 'Resolution', 200);
+f = open_figure(cfg, 3, 't-SNE');
+render_tsne_canvas(Ycc, metaP, struct('FigNum', f.Number, 'Title', [dataTitle ': conv encoder + contrastive (netCC)']));
+exportgraphics(f, fullfile(outDir, 'fig3_tsne_netCC.png'), 'Resolution', 200);
 
 regions = find_dense_regions(Ycc, cfg.numClusterMontages);
 for r = 1:numel(regions)
     members = regions{r}(1:min(16, numel(regions{r})));
     thumbs = cellfun(@(p) imresize(imread(p), [70 70]), {metaP(members).Path}, 'UniformOutput', false);
     figNum = 3 + r;
-    figure(figNum);
+    f = open_figure(cfg, figNum, sprintf('cluster %d', r));
     montage(thumbs, 'BorderSize', [3 3], 'BackgroundColor', 'white');
     title(sprintf('Densest t-SNE cluster #%d (%d members, %d shown)', r, numel(regions{r}), numel(members)));
-    exportgraphics(figure(figNum), fullfile(outDir, sprintf('fig%d_cluster%d.png', figNum, r)), 'Resolution', 150);
+    exportgraphics(f, fullfile(outDir, sprintf('fig%d_cluster%d.png', figNum, r)), 'Resolution', 150);
 end
 timings.tsne = toc(t0);
 fprintf('Stage 6: t-SNE + %d cluster montages (%.0fs)\n', numel(regions), timings.tsne);
@@ -310,12 +314,29 @@ labelMetrics = struct('features', {}, 'knnAcc', {}, 'kmeansPurity', {}, 'kmeansN
 if isDigits
     t0 = tic;
     figNum = 4 + numel(regions);
-    figure(figNum);
-    gscatter(Ycc(:, 1), Ycc(:, 2), labels, turbo(10), '.', 6);
+    f = open_figure(cfg, figNum, 't-SNE by true digit');
+    % Darkened so the light turbo colors (yellow-green) stay readable as thin ink on white.
+    digitColors = single(turbo(10)) * 0.85;
+    % Icons large enough to read overlap into solid blobs beyond a few thousand points.
+    maxShown = 3000;
+    shown = 1:numel(labels);
+    if numel(shown) > maxShown
+        rng(0);
+        shown = sort(randperm(numel(labels), maxShown));
+    end
+    canvasRGB = render_tsne_canvas(Ycc(shown, :), metaP(shown), struct('FigNum', f.Number, ...
+        'Images', gather(imgs(:, :, :, shown)), 'Colors', digitColors(labels(shown) + 1, :), ...
+        'Canvas', 1600, 'Thumb', 24, 'Title', {[dataTitle ': t-SNE of netCC features'], ...
+        sprintf('ink colored by true digit (%d of %d shown)', numel(shown), numel(labels))}));
+    hold on;
+    for d = 0:9
+        plot(NaN, NaN, 's', 'MarkerSize', 10, 'MarkerFaceColor', digitColors(d + 1, :), ...
+            'MarkerEdgeColor', 'none', 'DisplayName', num2str(d));
+    end
+    hold off;
     legend('Location', 'eastoutside');
-    axis equal off;
-    title([dataTitle ': t-SNE of netCC features, colored by true digit']);
-    exportgraphics(figure(figNum), fullfile(outDir, sprintf('fig%d_tsne_true_labels.png', figNum)), 'Resolution', 150);
+    exportgraphics(f, fullfile(outDir, sprintf('fig%d_tsne_true_labels.png', figNum)), 'Resolution', 200);
+    imwrite(canvasRGB, fullfile(outDir, sprintf('fig%d_tsne_true_labels_full.png', figNum)));
 
     % Raw pixels are taken ink-positive so cosine similarity isn't dominated by the shared white background.
     featSets = {
@@ -375,6 +396,14 @@ fprintf('=== Done. Metrics, figures, models.mat and run_log.txt are in:\n    %s\
 diary off;
 
 %% Local functions
+function f = open_figure(cfg, n, name)
+% Figure n of this run: window number cfg.figBase + n, cleared so a rerun
+% of the same dataset redraws it instead of drawing on top of it.
+f = figure(cfg.figBase + n);
+clf(f);
+f.Name = sprintf('%s | fig%d %s', cfg.dataset, n, name);
+end
+
 function net = to_device(net, fn)
 % Move a dlnetwork's learnables and state (e.g. batchnorm statistics),
 % which dlupdate on the network alone leaves behind, with fn = @gpuArray
