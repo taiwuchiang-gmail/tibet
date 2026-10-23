@@ -110,3 +110,20 @@ Stage 6: t-SNE + 4 cluster montages (8s)
 === Glyph pipeline | 20261023_053403_grid2 | dataset=tibetan | bottleneck=grid2 | labelsPerClass=0 | quick=0 | GPU=1 ===
 Results folder: C:\Users\tchiang\code\tibet\results\20261023_053403_grid2
   reusing existing crop folders
+Stage 3: conv AE trained on 853 images (Clean printed Tibetan text), recon MSE=0.00922 (22s)
+  contrastive epoch   1/60  loss=3.3720  (1s)
+  contrastive epoch  10/60  loss=1.2604  (4s)
+  contrastive epoch  20/60  loss=0.9881  (8s)
+  contrastive epoch  30/60  loss=0.8947  (11s)
+  contrastive epoch  40/60  loss=0.8281  (15s)
+  contrastive epoch  50/60  loss=0.7334  (19s)
+  contrastive epoch  60/60  loss=0.6842  (23s)
+Stage 4: contrastive fine-tuning done, final loss=0.6842 (23s)
+Stage 5: invariance (cosine sim to unperturbed glyph; mean / worst-case)
+  Conv AE (recon only)         shift 0.963 / 0.905   scale 0.960 / 0.894
+  Conv + contrastive (netCC)   shift 0.975 / 0.941   scale 0.968 / 0.907
+Stage 6: t-SNE + 4 cluster montages (8s)
+=== Done. Metrics, figures, models.mat and run_log.txt are in:
+    C:\Users\tchiang\code\tibet\results\20261023_053403_grid2
+=== Glyph pipeline | 20261023_053500_digits_mnist_L10 | dataset=digits_mnist | bottleneck=gap | labelsPerClass=10 | quick=0 | GPU=1 ===
+Results folder: C:\Users\tchiang\code\tibet\results\20261023_053500_digits_mnist_L10
