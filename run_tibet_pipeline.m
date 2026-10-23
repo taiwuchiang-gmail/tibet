@@ -306,15 +306,46 @@ end
 timings.tsne = toc(t0);
 fprintf('Stage 6: t-SNE + %d cluster montages (%.0fs)\n', numel(regions), timings.tsne);
 
+labelMetrics = struct('features', {}, 'knnAcc', {}, 'kmeansPurity', {}, 'kmeansNMI', {});
+if isDigits
+    t0 = tic;
+    figNum = 4 + numel(regions);
+    figure(figNum);
+    gscatter(Ycc(:, 1), Ycc(:, 2), labels, turbo(10), '.', 6);
+    legend('Location', 'eastoutside');
+    axis equal off;
+    title([dataTitle ': t-SNE of netCC features, colored by true digit']);
+    exportgraphics(figure(figNum), fullfile(outDir, sprintf('fig%d_tsne_true_labels.png', figNum)), 'Resolution', 150);
+
+    % Raw pixels are taken ink-positive so cosine similarity isn't dominated by the shared white background.
+    featSets = {
+        'Raw pixels (baseline)', reshape(1 - imgs, sz * sz, [])
+        'Conv AE (recon only)', squeeze(predict(netConvT, imgs, 'Outputs', 'bottleneck'))
+        'Conv + contrastive (netCC)', squeeze(predict(netCC, imgs, 'Outputs', 'bottleneck'))
+        };
+    for m = 1:size(featSets, 1)
+        [acc, pur, nmi] = label_metrics(featSets{m, 2}, labels, cfg.knnK, 10);
+        labelMetrics(end + 1) = struct('features', featSets{m, 1}, 'knnAcc', acc, ... %#ok<SAGROW>
+            'kmeansPurity', pur, 'kmeansNMI', nmi);
+    end
+    timings.labelMetrics = toc(t0);
+    fprintf('Stage 6b: label scores (%d-NN leave-one-out accuracy | K-means k=10 purity / NMI) (%.0fs)\n', ...
+        cfg.knnK, timings.labelMetrics);
+    for m = 1:numel(labelMetrics)
+        fprintf('  %-28s kNN %.3f   purity %.3f   NMI %.3f\n', labelMetrics(m).features, ...
+            labelMetrics(m).knnAcc, labelMetrics(m).kmeansPurity, labelMetrics(m).kmeansNMI);
+    end
+end
+
 %% 7. Summary
 % Gathered so models.mat also loads on a machine without a GPU.
 netCC = to_device(netCC, @gather);
-save(fullfile(outDir, 'models.mat'), 'netFC', 'netConvT', 'netCC', 'fCC', 'Ycc', 'metaP', ...
-    'invariance', 'contrastLoss', 'cfg', 'timings', '-v7.3');
+save(fullfile(outDir, 'models.mat'), 'netFC', 'netConvT', 'netCC', 'fCC', 'Ycc', 'metaP', 'labels', ...
+    'invariance', 'labelMetrics', 'contrastLoss', 'cfg', 'timings', '-v7.3');
 
 fid = fopen(fullfile(outDir, 'metrics.txt'), 'w');
-fprintf(fid, 'Tibetan glyph pipeline run %s (quick=%d, GPU=%d)\n\n', stamp, cfg.quick, useGPU);
-fprintf(fid, 'Clean crops: %d   Conv AE recon MSE: %.5f\n', size(imgs, 4), mseConv);
+fprintf(fid, 'Glyph pipeline run %s, dataset %s (quick=%d, GPU=%d)\n\n', stamp, cfg.dataset, cfg.quick, useGPU);
+fprintf(fid, '%s: %d images   Conv AE recon MSE: %.5f\n', dataTitle, size(imgs, 4), mseConv);
 if ~isempty(netFC)
     fprintf(fid, 'FC baseline recon MSE: %.5f\n', mseFC);
 end
@@ -324,6 +355,14 @@ fprintf(fid, '%-28s %10s %10s %10s %10s\n', 'model', 'shiftMean', 'shiftWorst', 
 for m = 1:numel(invariance)
     fprintf(fid, '%-28s %10.3f %10.3f %10.3f %10.3f\n', invariance(m).model, ...
         invariance(m).shiftMean, invariance(m).shiftWorst, invariance(m).scaleMean, invariance(m).scaleWorst);
+end
+if ~isempty(labelMetrics)
+    fprintf(fid, '\nLabel scores: %d-NN leave-one-out accuracy (cosine), K-means k=10 purity and NMI\n', cfg.knnK);
+    fprintf(fid, '%-28s %10s %10s %10s\n', 'features', 'kNN', 'purity', 'NMI');
+    for m = 1:numel(labelMetrics)
+        fprintf(fid, '%-28s %10.3f %10.3f %10.3f\n', labelMetrics(m).features, ...
+            labelMetrics(m).knnAcc, labelMetrics(m).kmeansPurity, labelMetrics(m).kmeansNMI);
+    end
 end
 fprintf(fid, '\nStage timings (s):\n');
 tf = fieldnames(timings);
