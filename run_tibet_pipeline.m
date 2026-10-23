@@ -13,8 +13,11 @@
 %     2. (Optional, off by default: cfg.runFCBaseline, Tibetan only)
 %        fully-connected ReLU+BN autoencoder on the scan crops, only
 %        useful to re-show the conv-vs-FC invariance comparison
-%     3. Convolutional autoencoder on the clean crops / digits (reconstruction only)
-%     4. Contrastive (NT-Xent) fine-tuning of the conv encoder -> netCC
+%     3. Convolutional autoencoder on the clean crops / digits (reconstruction
+%        only), bottleneck pooling set by cfg.bottleneck
+%     4. Contrastive (NT-Xent) fine-tuning of the conv encoder -> netCC.
+%        Digits with cfg.labelsPerClass > 0: semi-supervised SupCon instead
+%        (supcon_loss.m), with that many known labels per class
 %     5. Shift/scale invariance measurement for every model
 %     6. t-SNE of netCC features + densest-cluster montages. Digits also
 %        get a t-SNE colored by true label and label-based scores:
@@ -33,6 +36,8 @@
 %     run_tibet_pipeline
 %     cfgOverride = struct('dataset', 'digits_mnist');     % handwritten digits
 %     run_tibet_pipeline
+%     cfgOverride = struct('dataset', 'digits_mnist', 'bottleneck', 'grid2', 'labelsPerClass', 10);
+%     run_tibet_pipeline                       % 2x2 bottleneck + 10 labels per digit
 %
 %   printed_transcription_test.png must already exist: it is a screenshot
 %   of the live Adarshah reader (text under folio 1-1-1b of TILO1), not
@@ -47,6 +52,12 @@ cfg.knnK           = 5;         % digits only: neighbours for the kNN score
 cfg.resegment      = true;
 cfg.runFCBaseline  = false;
 cfg.imgSize        = 32;
+% 'gap':   global average pool of the 8x8x32 map, 32-d. Throws away where
+%          strokes are, so 0/6/9 collapse together.
+% 'grid2': 4x4 average pool to a 2x2x32 map, 128-d. Keeps coarse stroke layout.
+cfg.bottleneck     = 'gap';
+cfg.labelsPerClass = 0;         % digits only: >0 trains stage 4 with supcon_loss on this many known labels per class
+cfg.labeledPerBatch = 64;       % labeled samples added to every contrastive batch when labelsPerClass > 0
 cfg.fcMaxSamples   = 4000;
 cfg.fcEpochs       = 300;
 cfg.convEpochs     = 150;
@@ -89,6 +100,8 @@ if cfg.quick
     cfg.maxSamples = min(cfg.maxSamples, 2000);
 end
 assert(cfg.imgSize == 32, 'The conv autoencoder decoder is built for 32x32 inputs.');
+assert(any(strcmp(cfg.bottleneck, {'gap', 'grid2'})), 'Unknown cfg.bottleneck "%s".', cfg.bottleneck);
+assert(cfg.labelsPerClass == 0 || isDigits, 'cfg.labelsPerClass needs a labeled (digit) dataset.');
 
 projDir = fileparts(mfilename('fullpath'));
 cd(projDir);
@@ -97,6 +110,12 @@ addpath(projDir);
 stamp = string(datetime('now', 'Format', 'yyyyMMdd_HHmmss'));
 if isDigits
     stamp = stamp + "_" + cfg.dataset;
+end
+if ~strcmp(cfg.bottleneck, 'gap')
+    stamp = stamp + "_" + cfg.bottleneck;
+end
+if cfg.labelsPerClass > 0
+    stamp = stamp + sprintf("_L%d", cfg.labelsPerClass);
 end
 if cfg.quick
     stamp = stamp + "_quick";
@@ -116,7 +135,8 @@ if useGPU
     gpurng(cfg.seed);
 end
 timings = struct();
-fprintf('=== Glyph pipeline | %s | dataset=%s | quick=%d | GPU=%d ===\n', stamp, cfg.dataset, cfg.quick, useGPU);
+fprintf('=== Glyph pipeline | %s | dataset=%s | bottleneck=%s | labelsPerClass=%d | quick=%d | GPU=%d ===\n', ...
+    stamp, cfg.dataset, cfg.bottleneck, cfg.labelsPerClass, cfg.quick, useGPU);
 fprintf('Results folder: %s\n', outDir);
 
 %% 1. Data: page segmentation (Tibetan) or digit dataset preparation
@@ -206,7 +226,7 @@ end
 convOpts = trainingOptions('adam', ...
     'MaxEpochs', cfg.convEpochs, 'MiniBatchSize', 64, 'InitialLearnRate', 2e-3, ...
     'Shuffle', 'every-epoch', 'Verbose', false, 'Plots', 'none');
-[netConvT, infoConv] = trainnet(imgs, imgs, build_conv_autoencoder(sz), "mse", convOpts);
+[netConvT, infoConv] = trainnet(imgs, imgs, build_conv_autoencoder(sz, cfg.bottleneck), "mse", convOpts);
 mseConv = gather(mean((predict(netConvT, imgs) - imgs).^2, 'all'));
 timings.convAE = toc(t0);
 fprintf('Stage 3: conv AE trained on %d images (%s), recon MSE=%.5f (%.0fs)\n', size(imgs, 4), dataTitle, mseConv, timings.convAE);
@@ -234,6 +254,28 @@ end
 
 nSamples = size(imgs, 4);
 numBatches = floor(nSamples / cfg.contrastBatch);
+
+% Known labels for the semi-supervised variant: -1 = unknown. A small
+% labeled pool would rarely put two same-class samples in one random batch,
+% so every batch also gets cfg.labeledPerBatch draws from the pool.
+knownLabel = -ones(1, nSamples, 'single');
+labeledIdx = zeros(0, 1);
+if cfg.labelsPerClass > 0
+    rng(cfg.seed + 1);
+    for c = unique(labels)'
+        members = find(labels == c);
+        pick = members(randperm(numel(members), min(cfg.labelsPerClass, numel(members))));
+        labeledIdx = [labeledIdx; pick(:)]; %#ok<AGROW>
+    end
+    knownLabel(labeledIdx) = labels(labeledIdx);
+    fprintf('Stage 4: %d labeled samples (%d per class), %d added to each batch of %d\n', ...
+        numel(labeledIdx), cfg.labelsPerClass, cfg.labeledPerBatch, cfg.contrastBatch);
+end
+lossName = 'NT-Xent';
+if ~isempty(labeledIdx)
+    lossName = 'SupCon';
+end
+
 avgGrad = [];
 avgSqGrad = [];
 iteration = 0;
@@ -244,9 +286,14 @@ for epoch = 1:cfg.contrastEpochs
     batchLoss = zeros(numBatches, 1, 'like', imgs);
     for b = 1:numBatches
         idx = order((b - 1) * cfg.contrastBatch + 1 : b * cfg.contrastBatch);
+        batchLabels = [];
+        if ~isempty(labeledIdx)
+            idx = [idx, labeledIdx(randi(numel(labeledIdx), 1, cfg.labeledPerBatch))']; %#ok<AGROW>
+            batchLabels = knownLabel(idx);
+        end
         dlXb = dlarray(make_contrastive_batch_img(imgs, idx), 'SSCB');
         iteration = iteration + 1;
-        [loss, gradients, state] = dlfeval(@contrastive_model_loss, netCC, dlXb, cfg.tau);
+        [loss, gradients, state] = dlfeval(@contrastive_model_loss, netCC, dlXb, cfg.tau, batchLabels);
         netCC.State = state;
         [netCC, avgGrad, avgSqGrad] = adamupdate(netCC, gradients, avgGrad, avgSqGrad, iteration, cfg.contrastLR);
         batchLoss(b) = extractdata(loss);
@@ -261,15 +308,16 @@ fprintf('Stage 4: contrastive fine-tuning done, final loss=%.4f (%.0fs)\n', cont
 
 f = open_figure(cfg, 2, 'contrastive loss');
 plot(1:cfg.contrastEpochs, contrastLoss, 'o-', 'LineWidth', 1.5);
-xlabel('Epoch'); ylabel('mean NT-Xent loss'); grid on;
-title('Contrastive fine-tuning loss (conv encoder)');
+xlabel('Epoch'); ylabel(['mean ' lossName ' loss']); grid on;
+title(sprintf('Contrastive fine-tuning loss (conv encoder, %s bottleneck)', cfg.bottleneck));
 exportgraphics(f, fullfile(outDir, 'fig2_contrastive_loss.png'), 'Resolution', 150);
 
 %% 5. Shift/scale invariance of each model
 t0 = tic;
-% Encoders map an sz x sz x 1 x B image batch to D x B features.
-encodeConv = @(net) @(X) squeeze(predict(net, X, 'Outputs', 'bottleneck'));
-models = {'Conv AE (recon only)', encodeConv(netConvT); 'Conv + contrastive (netCC)', encodeConv(netCC)};
+% Encoders map an sz x sz x 1 x B image batch to D x B features; the
+% reshape flattens a 'grid2' bottleneck's 2x2x32 map.
+embed = @(net, X) reshape(predict(net, X, 'Outputs', 'bottleneck'), [], size(X, 4));
+models = {'Conv AE (recon only)', @(X) embed(netConvT, X); 'Conv + contrastive (netCC)', @(X) embed(netCC, X)};
 if ~isempty(netFC)
     encodeFC = @(X) predict(netFC, reshape(X, sz * sz, [])', 'Outputs', 'bottleneck')';
     models = [{'FC ReLU+BN (baseline)', encodeFC}; models];
@@ -290,7 +338,7 @@ end
 %% 6. t-SNE of netCC features + densest-cluster montages
 t0 = tic;
 % tsne has no gpuArray support; it runs on the CPU in single.
-fCC = gather(squeeze(predict(netCC, imgs, 'Outputs', 'bottleneck')));
+fCC = gather(embed(netCC, imgs));
 rng(0);
 Ycc = tsne(fCC', 'Perplexity', 30);
 f = open_figure(cfg, 3, 't-SNE');
@@ -310,7 +358,7 @@ end
 timings.tsne = toc(t0);
 fprintf('Stage 6: t-SNE + %d cluster montages (%.0fs)\n', numel(regions), timings.tsne);
 
-labelMetrics = struct('features', {}, 'knnAcc', {}, 'kmeansPurity', {}, 'kmeansNMI', {});
+labelMetrics = struct('features', {}, 'knnAcc', {}, 'kmeansPurity', {}, 'kmeansNMI', {}, 'zeroCluster', {});
 if isDigits
     t0 = tic;
     figNum = 4 + numel(regions);
@@ -339,33 +387,42 @@ if isDigits
     imwrite(canvasRGB, fullfile(outDir, sprintf('fig%d_tsne_true_labels_full.png', figNum)));
 
     % Raw pixels are taken ink-positive so cosine similarity isn't dominated by the shared white background.
+    % Samples whose labels training saw are left out of the scores.
+    evalSet = true(numel(labels), 1);
+    evalSet(labeledIdx) = false;
+    evalLabels = labels(evalSet);
     featSets = {
-        'Raw pixels (baseline)', reshape(1 - imgs, sz * sz, [])
-        'Conv AE (recon only)', squeeze(predict(netConvT, imgs, 'Outputs', 'bottleneck'))
-        'Conv + contrastive (netCC)', squeeze(predict(netCC, imgs, 'Outputs', 'bottleneck'))
+        'Raw pixels (baseline)', reshape(1 - imgs(:, :, :, evalSet), sz * sz, [])
+        'Conv AE (recon only)', embed(netConvT, imgs(:, :, :, evalSet))
+        'Conv + contrastive (netCC)', embed(netCC, imgs(:, :, :, evalSet))
         };
     for m = 1:size(featSets, 1)
-        [acc, pur, nmi] = label_metrics(featSets{m, 2}, labels, cfg.knnK, 10);
+        [acc, pur, nmi, cl] = label_metrics(featSets{m, 2}, evalLabels, cfg.knnK, 10);
+        % The K-means cluster holding the most 0s: [0s, 6s, 9s, other digits] in it.
+        inZero = cl == mode(cl(evalLabels == 0));
+        zeroCluster = [nnz(inZero & evalLabels == 0), nnz(inZero & evalLabels == 6), ...
+            nnz(inZero & evalLabels == 9), nnz(inZero & ~ismember(evalLabels, [0 6 9]))];
         labelMetrics(end + 1) = struct('features', featSets{m, 1}, 'knnAcc', acc, ... %#ok<SAGROW>
-            'kmeansPurity', pur, 'kmeansNMI', nmi);
+            'kmeansPurity', pur, 'kmeansNMI', nmi, 'zeroCluster', zeroCluster);
     end
     timings.labelMetrics = toc(t0);
-    fprintf('Stage 6b: label scores (%d-NN leave-one-out accuracy | K-means k=10 purity / NMI) (%.0fs)\n', ...
-        cfg.knnK, timings.labelMetrics);
+    fprintf(['Stage 6b: label scores on %d unlabeled samples (%d-NN leave-one-out accuracy | K-means k=10 purity / NMI | ' ...
+        'cluster holding most 0s: 0s/6s/9s/other) (%.0fs)\n'], nnz(evalSet), cfg.knnK, timings.labelMetrics);
     for m = 1:numel(labelMetrics)
-        fprintf('  %-28s kNN %.3f   purity %.3f   NMI %.3f\n', labelMetrics(m).features, ...
-            labelMetrics(m).knnAcc, labelMetrics(m).kmeansPurity, labelMetrics(m).kmeansNMI);
+        fprintf('  %-28s kNN %.3f   purity %.3f   NMI %.3f   0-cluster %d/%d/%d/%d\n', labelMetrics(m).features, ...
+            labelMetrics(m).knnAcc, labelMetrics(m).kmeansPurity, labelMetrics(m).kmeansNMI, labelMetrics(m).zeroCluster);
     end
 end
 
 %% 7. Summary
 % Gathered so models.mat also loads on a machine without a GPU.
 netCC = to_device(netCC, @gather);
-save(fullfile(outDir, 'models.mat'), 'netFC', 'netConvT', 'netCC', 'fCC', 'Ycc', 'metaP', 'labels', ...
+save(fullfile(outDir, 'models.mat'), 'netFC', 'netConvT', 'netCC', 'fCC', 'Ycc', 'metaP', 'labels', 'labeledIdx', ...
     'invariance', 'labelMetrics', 'contrastLoss', 'cfg', 'timings', '-v7.3');
 
 fid = fopen(fullfile(outDir, 'metrics.txt'), 'w');
-fprintf(fid, 'Glyph pipeline run %s, dataset %s (quick=%d, GPU=%d)\n\n', stamp, cfg.dataset, cfg.quick, useGPU);
+fprintf(fid, 'Glyph pipeline run %s, dataset %s, bottleneck %s, labelsPerClass %d (quick=%d, GPU=%d)\n\n', ...
+    stamp, cfg.dataset, cfg.bottleneck, cfg.labelsPerClass, cfg.quick, useGPU);
 fprintf(fid, '%s: %d images   Conv AE recon MSE: %.5f\n', dataTitle, size(imgs, 4), mseConv);
 if ~isempty(netFC)
     fprintf(fid, 'FC baseline recon MSE: %.5f\n', mseFC);
@@ -378,11 +435,12 @@ for m = 1:numel(invariance)
         invariance(m).shiftMean, invariance(m).shiftWorst, invariance(m).scaleMean, invariance(m).scaleWorst);
 end
 if ~isempty(labelMetrics)
-    fprintf(fid, '\nLabel scores: %d-NN leave-one-out accuracy (cosine), K-means k=10 purity and NMI\n', cfg.knnK);
-    fprintf(fid, '%-28s %10s %10s %10s\n', 'features', 'kNN', 'purity', 'NMI');
+    fprintf(fid, ['\nLabel scores on the %d samples not labeled for training: %d-NN leave-one-out accuracy (cosine), ' ...
+        'K-means k=10 purity and NMI,\nand the contents of the K-means cluster holding the most 0s\n'], nnz(evalSet), cfg.knnK);
+    fprintf(fid, '%-28s %10s %10s %10s %8s %8s %8s %8s\n', 'features', 'kNN', 'purity', 'NMI', 'zc 0s', 'zc 6s', 'zc 9s', 'zc other');
     for m = 1:numel(labelMetrics)
-        fprintf(fid, '%-28s %10.3f %10.3f %10.3f\n', labelMetrics(m).features, ...
-            labelMetrics(m).knnAcc, labelMetrics(m).kmeansPurity, labelMetrics(m).kmeansNMI);
+        fprintf(fid, '%-28s %10.3f %10.3f %10.3f %8d %8d %8d %8d\n', labelMetrics(m).features, ...
+            labelMetrics(m).knnAcc, labelMetrics(m).kmeansPurity, labelMetrics(m).kmeansNMI, labelMetrics(m).zeroCluster);
     end
 end
 fprintf(fid, '\nStage timings (s):\n');
@@ -443,7 +501,17 @@ layers = [
 net = dlnetwork(layers);
 end
 
-function net = build_conv_autoencoder(sz)
+function net = build_conv_autoencoder(sz, bottleneck)
+% Encoder ends in an 8x8x32 map; the bottleneck pools it to 1x1 ('gap') or
+% 2x2 ('grid2'), and tconv1 upsamples either back to 4x4.
+switch bottleneck
+    case 'gap'
+        pool = globalAveragePooling2dLayer('Name', 'bottleneck');
+        tconv1 = transposedConv2dLayer(4, 32, 'Stride', 4, 'Name', 'tconv1');
+    case 'grid2'
+        pool = averagePooling2dLayer(4, 'Stride', 4, 'Name', 'bottleneck');
+        tconv1 = transposedConv2dLayer(2, 32, 'Stride', 2, 'Name', 'tconv1');
+end
 layers = [
     imageInputLayer([sz sz 1], 'Normalization', 'none', 'Name', 'input')
     convolution2dLayer(3, 16, 'Padding', 'same', 'Name', 'conv1')
@@ -457,8 +525,8 @@ layers = [
     convolution2dLayer(3, 32, 'Padding', 'same', 'Name', 'conv3')
     batchNormalizationLayer('Name', 'bn3')
     reluLayer('Name', 'relu3')
-    globalAveragePooling2dLayer('Name', 'bottleneck')
-    transposedConv2dLayer(4, 32, 'Stride', 4, 'Name', 'tconv1')
+    pool
+    tconv1
     batchNormalizationLayer('Name', 'bn4')
     reluLayer('Name', 'relu4')
     transposedConv2dLayer(2, 32, 'Stride', 2, 'Name', 'tconv2')

@@ -1,7 +1,7 @@
-function [knnAcc, purity, nmi] = label_metrics(F, labels, k, nClusters)
+function [knnAcc, purity, nmi, cluster] = label_metrics(F, labels, k, nClusters)
 %LABEL_METRICS Score how well features separate known classes.
 %
-%   [KNNACC, PURITY, NMI] = LABEL_METRICS(F, LABELS, K, NCLUSTERS) with F
+%   [KNNACC, PURITY, NMI, CLUSTER] = LABEL_METRICS(F, LABELS, K, NCLUSTERS) with F
 %   a D x N feature matrix (single, CPU or gpuArray) and LABELS N x 1:
 %       KNNACC - leave-one-out K-nearest-neighbour accuracy (cosine
 %                similarity, majority vote, ties to the smaller label)
@@ -11,6 +11,7 @@ function [knnAcc, purity, nmi] = label_metrics(F, labels, k, nClusters)
 %       NMI    - normalized mutual information between clusters and
 %                labels (arithmetic-mean normalization), 1 = perfect
 %                agreement, ~0 = unrelated
+%       CLUSTER - N x 1 K-means cluster index of each sample (CPU single)
 
 F = F ./ (vecnorm(F, 2, 1) + eps('single'));
 labels = cast(labels(:), 'like', F);
@@ -45,4 +46,5 @@ terms(P == 0) = 0;
 hx = -sum(px(px > 0) .* log(px(px > 0)));
 hy = -sum(py(py > 0) .* log(py(py > 0)));
 nmi = gather(2 * sum(terms, 'all') / (hx + hy));
+cluster = gather(cluster);
 end
