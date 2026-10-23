@@ -171,3 +171,25 @@ Stage 6b: label scores on 9990 unlabeled samples (5-NN leave-one-out accuracy | 
     C:\Users\tchiang\code\tibet\results\20261023_053812_digits_mnist_grid2_L1
 === Glyph pipeline | 20261023_054110_digits_mnist_grid2_L10 | dataset=digits_mnist | bottleneck=grid2 | labelsPerClass=10 | quick=0 | GPU=1 ===
 Results folder: C:\Users\tchiang\code\tibet\results\20261023_054110_digits_mnist_grid2_L10
+Stage 3: conv AE trained on 10000 images (Handwritten digits (MNIST test set)), recon MSE=0.00838 (54s)
+Stage 4: 100 labeled samples (10 per class), 64 added to each batch of 256
+  contrastive epoch   1/60  loss=4.3351  (1s)
+  contrastive epoch  10/60  loss=2.4302  (10s)
+  contrastive epoch  20/60  loss=2.1220  (20s)
+  contrastive epoch  30/60  loss=1.9893  (31s)
+  contrastive epoch  40/60  loss=1.8924  (41s)
+  contrastive epoch  50/60  loss=1.8321  (51s)
+  contrastive epoch  60/60  loss=1.7863  (61s)
+Stage 4: contrastive fine-tuning done, final loss=1.7863 (61s)
+Stage 5: invariance (cosine sim to unperturbed glyph; mean / worst-case)
+  Conv AE (recon only)         shift 0.967 / 0.922   scale 0.966 / 0.894
+  Conv + contrastive (netCC)   shift 0.978 / 0.950   scale 0.977 / 0.936
+Stage 6: t-SNE + 4 cluster montages (17s)
+Stage 6b: label scores on 9900 unlabeled samples (5-NN leave-one-out accuracy | K-means k=10 purity / NMI | cluster holding most 0s: 0s/6s/9s/other) (11s)
+  Raw pixels (baseline)        kNN 0.962   purity 0.615   NMI 0.536   0-cluster 867/35/11/86
+  Conv AE (recon only)         kNN 0.961   purity 0.583   NMI 0.502   0-cluster 809/70/17/171
+  Conv + contrastive (netCC)   kNN 0.978   purity 0.644   NMI 0.572   0-cluster 730/6/3/75
+=== Done. Metrics, figures, models.mat and run_log.txt are in:
+    C:\Users\tchiang\code\tibet\results\20261023_054110_digits_mnist_grid2_L10
+=== Glyph pipeline | 20261023_054338_digits_mnist_grid2_L50 | dataset=digits_mnist | bottleneck=grid2 | labelsPerClass=50 | quick=0 | GPU=1 ===
+Results folder: C:\Users\tchiang\code\tibet\results\20261023_054338_digits_mnist_grid2_L50
