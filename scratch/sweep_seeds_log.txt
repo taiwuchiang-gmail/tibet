@@ -4,3 +4,8 @@
 
 === Glyph pipeline | 20261023_055306_digits_mnist_s2 | dataset=digits_mnist | bottleneck=grid2 | labelsPerClass=0 | quick=0 | GPU=1 ===
 Results folder: C:\Users\tchiang\code\tibet\results\20261023_055306_digits_mnist_s2
+Stage 3: conv AE trained on 10000 images (Handwritten digits (MNIST test set)), recon MSE=0.00835 (61s)
+[Warning: Scrollable is set to 'on' on all figures because the Windows accessibility text size setting is greater than 100%.
+To prevent this behavior, revert the text size setting back to 100% and instead use the Windows system display scale setting to increase the size of on-screen
+elements.] 
+  contrastive epoch   1/60  loss=3.5871  (4s)
