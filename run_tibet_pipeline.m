@@ -390,46 +390,6 @@ labels = single(str2double(names))';
 assert(~any(isnan(labels)), 'Could not parse a digit label from every parent folder name.');
 end
 
-function [knnAcc, purity, nmi] = label_metrics(F, labels, k, nClusters)
-% F is D x N features, labels N x 1. Returns leave-one-out k-nearest-
-% neighbour accuracy (cosine similarity, majority vote) and K-means
-% purity / NMI. Purity is the accuracy of giving every K-means cluster
-% its majority label, i.e. the best case for cluster-then-label.
-F = F ./ (vecnorm(F, 2, 1) + eps('single'));
-labels = cast(labels(:), 'like', F);
-N = size(F, 2);
-
-pred = zeros(N, 1, 'like', F);
-chunk = 2048; % bounds the chunk x N similarity block in GPU memory
-for s = 1:chunk:N
-    cols = s:min(N, s + chunk - 1);
-    S = F(:, cols)' * F;
-    % Cosine similarity is >= -1, so -3 on the diagonal drops each point from its own neighbours.
-    S(:, cols) = S(:, cols) - 3 * eye(numel(cols), 'like', S);
-    [~, nn] = maxk(S, k, 2);
-    pred(cols) = mode(labels(nn), 2);
-end
-knnAcc = gather(mean(pred == labels));
-
-rng(0);
-if isgpuarray(F)
-    gpurng(0);
-end
-cluster = cast(kmeans(F', nClusters, 'Replicates', 5, 'MaxIter', 500), 'like', F);
-classes = unique(labels)';
-C = single(cluster == 1:nClusters)' * single(labels == classes); % clusters x classes counts
-purity = gather(sum(max(C, [], 2)) / N);
-
-P = C / N;
-px = sum(P, 2);
-py = sum(P, 1);
-terms = P .* log(P ./ (px .* py));
-terms(P == 0) = 0;
-hx = -sum(px(px > 0) .* log(px(px > 0)));
-hy = -sum(py(py > 0) .* log(py(py > 0)));
-nmi = gather(2 * sum(terms, 'all') / (hx + hy));
-end
-
 function net = build_fc_autoencoder(nIn)
 layers = [
     featureInputLayer(nIn, 'Name', 'input')
