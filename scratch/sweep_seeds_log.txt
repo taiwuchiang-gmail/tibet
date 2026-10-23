@@ -1,0 +1,6 @@
+﻿
+	Home License -- for personal use only.  Not for government,
+	academic, research, commercial, or other organizational use.
+
+=== Glyph pipeline | 20261023_055306_digits_mnist_s2 | dataset=digits_mnist | bottleneck=grid2 | labelsPerClass=0 | quick=0 | GPU=1 ===
+Results folder: C:\Users\tchiang\code\tibet\results\20261023_055306_digits_mnist_s2

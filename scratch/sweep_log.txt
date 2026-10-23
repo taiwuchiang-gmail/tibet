@@ -193,3 +193,60 @@ Stage 6b: label scores on 9900 unlabeled samples (5-NN leave-one-out accuracy | 
     C:\Users\tchiang\code\tibet\results\20261023_054110_digits_mnist_grid2_L10
 === Glyph pipeline | 20261023_054338_digits_mnist_grid2_L50 | dataset=digits_mnist | bottleneck=grid2 | labelsPerClass=50 | quick=0 | GPU=1 ===
 Results folder: C:\Users\tchiang\code\tibet\results\20261023_054338_digits_mnist_grid2_L50
+Stage 3: conv AE trained on 10000 images (Handwritten digits (MNIST test set)), recon MSE=0.00792 (57s)
+Stage 4: 500 labeled samples (50 per class), 64 added to each batch of 256
+  contrastive epoch   1/60  loss=4.4565  (1s)
+  contrastive epoch  10/60  loss=2.7700  (11s)
+  contrastive epoch  20/60  loss=2.5523  (21s)
+  contrastive epoch  30/60  loss=2.4473  (32s)
+  contrastive epoch  40/60  loss=2.3712  (45s)
+  contrastive epoch  50/60  loss=2.3485  (57s)
+  contrastive epoch  60/60  loss=2.3102  (70s)
+Stage 4: contrastive fine-tuning done, final loss=2.3102 (70s)
+Stage 5: invariance (cosine sim to unperturbed glyph; mean / worst-case)
+  Conv AE (recon only)         shift 0.968 / 0.929   scale 0.965 / 0.900
+  Conv + contrastive (netCC)   shift 0.974 / 0.947   scale 0.974 / 0.919
+Stage 6: t-SNE + 4 cluster montages (18s)
+Stage 6b: label scores on 9500 unlabeled samples (5-NN leave-one-out accuracy | K-means k=10 purity / NMI | cluster holding most 0s: 0s/6s/9s/other) (11s)
+  Raw pixels (baseline)        kNN 0.961   purity 0.607   NMI 0.550   0-cluster 818/33/10/87
+  Conv AE (recon only)         kNN 0.958   purity 0.574   NMI 0.484   0-cluster 762/58/15/143
+  Conv + contrastive (netCC)   kNN 0.975   purity 0.596   NMI 0.538   0-cluster 707/7/16/71
+=== Done. Metrics, figures, models.mat and run_log.txt are in:
+    C:\Users\tchiang\code\tibet\results\20261023_054338_digits_mnist_grid2_L50
+=== Glyph pipeline | 20261023_054621_digits_printed_grid2_L10 | dataset=digits_printed | bottleneck=grid2 | labelsPerClass=10 | quick=0 | GPU=1 ===
+Results folder: C:\Users\tchiang\code\tibet\results\20261023_054621_digits_printed_grid2_L10
+Stage 3: conv AE trained on 2550 images (Printed digits (installed fonts)), recon MSE=0.00610 (15s)
+Stage 4: 100 labeled samples (10 per class), 64 added to each batch of 256
+  contrastive epoch   1/60  loss=5.3289  (1s)
+  contrastive epoch  10/60  loss=3.5591  (3s)
+  contrastive epoch  20/60  loss=3.2587  (5s)
+  contrastive epoch  30/60  loss=3.0307  (8s)
+  contrastive epoch  40/60  loss=2.9179  (10s)
+  contrastive epoch  50/60  loss=2.8286  (13s)
+  contrastive epoch  60/60  loss=2.7045  (15s)
+Stage 4: contrastive fine-tuning done, final loss=2.7045 (15s)
+Stage 5: invariance (cosine sim to unperturbed glyph; mean / worst-case)
+  Conv AE (recon only)         shift 0.964 / 0.907   scale 0.970 / 0.929
+  Conv + contrastive (netCC)   shift 0.984 / 0.954   scale 0.983 / 0.949
+Stage 6: t-SNE + 4 cluster montages (9s)
+Stage 6b: label scores on 2450 unlabeled samples (5-NN leave-one-out accuracy | K-means k=10 purity / NMI | cluster holding most 0s: 0s/6s/9s/other) (4s)
+  Raw pixels (baseline)        kNN 0.947   purity 0.881   NMI 0.772   0-cluster 214/21/11/15
+  Conv AE (recon only)         kNN 0.958   purity 0.712   NMI 0.622   0-cluster 160/47/44/63
+  Conv + contrastive (netCC)   kNN 0.976   purity 0.848   NMI 0.752   0-cluster 209/4/25/5
+=== Done. Metrics, figures, models.mat and run_log.txt are in:
+    C:\Users\tchiang\code\tibet\results\20261023_054621_digits_printed_grid2_L10
+                        run                              dataset          bottleneck    labelsPerClass    shiftMean    shiftWorst    scaleMean    scaleWorst      knn      purity       nmi      zc0    zc6    zc9    zcOther
+    ____________________________________________    __________________    __________    ______________    _________    __________    _________    __________    _______    _______    _______    ___    ___    ___    _______
+
+    {'20261023_052506_digits_printed'          }    {'digits_printed'}    {'gap'  }            0           0.99782      0.99499       0.99396      0.97741         0.96    0.66667    0.61672    143     39     37       19  
+    {'20261023_052624_digits_printed_grid2'    }    {'digits_printed'}    {'grid2'}            0           0.98337      0.96111       0.98305      0.95738      0.97373    0.85451    0.75437    220      6      4        4  
+    {'20261023_052723_digits_mnist'            }    {'digits_mnist'  }    {'gap'  }            0           0.99732      0.99273       0.99393      0.98553        0.965     0.4454    0.37957    380    134     85      272  
+    {'20261023_053005_digits_mnist_grid2'      }    {'digits_mnist'  }    {'grid2'}            0           0.98097      0.95842       0.98013      0.94747       0.9732     0.6717    0.57714    861     24      5       54  
+    {'20261023_053303'                         }    {'tibetan'       }    {'gap'  }            0           0.99184      0.97679       0.98458      0.95728          NaN        NaN        NaN    NaN    NaN    NaN      NaN  
+    {'20261023_053403_grid2'                   }    {'tibetan'       }    {'grid2'}            0           0.97455      0.94076       0.96811       0.9073          NaN        NaN        NaN    NaN    NaN    NaN      NaN  
+    {'20261023_053500_digits_mnist_L10'        }    {'digits_mnist'  }    {'gap'  }           10           0.99595      0.99034       0.99264      0.98259      0.96949    0.49333    0.41533    355    505      3      216  
+    {'20261023_053812_digits_mnist_grid2_L1'   }    {'digits_mnist'  }    {'grid2'}            1           0.97727      0.92502       0.98033       0.9387      0.97447    0.67477    0.58838    848     62      7       60  
+    {'20261023_054110_digits_mnist_grid2_L10'  }    {'digits_mnist'  }    {'grid2'}           10            0.9778      0.95017       0.97684      0.93591      0.97778    0.64384    0.57152    730      6      3       75  
+    {'20261023_054338_digits_mnist_grid2_L50'  }    {'digits_mnist'  }    {'grid2'}           50           0.97423      0.94705       0.97431      0.91897      0.97453    0.59632    0.53785    707      7     16       71  
+    {'20261023_054621_digits_printed_grid2_L10'}    {'digits_printed'}    {'grid2'}           10           0.98362      0.95444       0.98318      0.94895      0.97633    0.84776    0.75156    209      4     25        5  
+
