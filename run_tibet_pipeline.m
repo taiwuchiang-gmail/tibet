@@ -1,16 +1,25 @@
 %RUN_TIBET_PIPELINE Reproduce the verified Tibetan glyph pipeline end to end.
 %
 %   Stages (each one was verified interactively before being added here):
-%     1. Segment pages into glyph crops (segment_page.m)
+%     1. Data. For cfg.dataset = 'tibetan' (default), segment pages into
+%        glyph crops (segment_page.m):
 %          - real woodblock scans: 1-1-2b.jpg + samples_adarshah/*.jpg
 %          - clean printed transcription: printed_transcription_test.png
-%     2. (Optional, off by default: cfg.runFCBaseline) fully-connected
-%        ReLU+BN autoencoder on the scan crops, only useful to re-show
-%        the conv-vs-FC invariance comparison
-%     3. Convolutional autoencoder on the clean crops (reconstruction only)
+%        For the digit datasets, build digits/<set>/<label>/*.png once
+%        if missing:
+%          - 'digits_printed': 0-9 in every usable installed font
+%            (make_printed_digits.m)
+%          - 'digits_mnist': handwritten MNIST test set (make_mnist_digits.m)
+%     2. (Optional, off by default: cfg.runFCBaseline, Tibetan only)
+%        fully-connected ReLU+BN autoencoder on the scan crops, only
+%        useful to re-show the conv-vs-FC invariance comparison
+%     3. Convolutional autoencoder on the clean crops / digits (reconstruction only)
 %     4. Contrastive (NT-Xent) fine-tuning of the conv encoder -> netCC
 %     5. Shift/scale invariance measurement for every model
-%     6. t-SNE of netCC features on clean crops + densest-cluster montages
+%     6. t-SNE of netCC features + densest-cluster montages. Digits also
+%        get a t-SNE colored by true label and label-based scores:
+%        leave-one-out kNN accuracy, and K-means purity / NMI (purity =
+%        accuracy of labeling every cluster with its majority label).
 %     7. Summary: metrics.txt, figures, models.mat in results/<timestamp>/
 %
 %   NOT included: alignment-based auto-labeling (blocked, wrong results)
@@ -20,6 +29,10 @@
 %     run_tibet_pipeline                       % full run
 %     cfgOverride = struct('quick', true);     % smoke test, a few epochs
 %     run_tibet_pipeline
+%     cfgOverride = struct('dataset', 'digits_printed');   % printed digits
+%     run_tibet_pipeline
+%     cfgOverride = struct('dataset', 'digits_mnist');     % handwritten digits
+%     run_tibet_pipeline
 %
 %   printed_transcription_test.png must already exist: it is a screenshot
 %   of the live Adarshah reader (text under folio 1-1-1b of TILO1), not
@@ -27,7 +40,10 @@
 
 %% 0. Configuration
 cfg = struct();
+cfg.dataset        = 'tibetan'; % 'tibetan' | 'digits_printed' | 'digits_mnist'
 cfg.quick          = false;
+cfg.maxSamples     = Inf;       % cap on images used in stages 3-6
+cfg.knnK           = 5;         % digits only: neighbours for the kNN score
 cfg.resegment      = true;
 cfg.runFCBaseline  = false;
 cfg.imgSize        = 32;
@@ -41,17 +57,32 @@ cfg.tau            = 0.1;
 cfg.seed           = 1;
 cfg.numClusterMontages = 4;
 
+override = struct();
 if exist('cfgOverride', 'var') && isstruct(cfgOverride)
-    fn = fieldnames(cfgOverride);
-    for i = 1:numel(fn)
-        cfg.(fn{i}) = cfgOverride.(fn{i});
-    end
+    override = cfgOverride;
+end
+if isfield(override, 'dataset')
+    cfg.dataset = override.dataset;
+end
+assert(any(strcmp(cfg.dataset, {'tibetan', 'digits_printed', 'digits_mnist'})), ...
+    'Unknown cfg.dataset "%s".', cfg.dataset);
+isDigits = startsWith(cfg.dataset, 'digits');
+if isDigits
+    % Thousands of images instead of 853: fewer AE epochs still give more
+    % updates, and bigger contrastive batches give NT-Xent more negatives.
+    cfg.convEpochs = 30;
+    cfg.contrastBatch = 256;
+end
+fn = fieldnames(override);
+for i = 1:numel(fn)
+    cfg.(fn{i}) = override.(fn{i});
 end
 if cfg.quick
     cfg.fcEpochs = 3;
     cfg.convEpochs = 3;
     cfg.contrastEpochs = 2;
     cfg.fcMaxSamples = 500;
+    cfg.maxSamples = min(cfg.maxSamples, 2000);
 end
 assert(cfg.imgSize == 32, 'The conv autoencoder decoder is built for 32x32 inputs.');
 
@@ -60,6 +91,9 @@ cd(projDir);
 addpath(projDir);
 
 stamp = string(datetime('now', 'Format', 'yyyyMMdd_HHmmss'));
+if isDigits
+    stamp = stamp + "_" + cfg.dataset;
+end
 if cfg.quick
     stamp = stamp + "_quick";
 end
@@ -79,7 +113,7 @@ if useGPU
     gpurng(cfg.seed);
 end
 timings = struct();
-fprintf('=== Tibetan glyph pipeline | %s | quick=%d | GPU=%d ===\n', stamp, cfg.quick, useGPU);
+fprintf('=== Glyph pipeline | %s | dataset=%s | quick=%d | GPU=%d ===\n', stamp, cfg.dataset, cfg.quick, useGPU);
 fprintf('Results folder: %s\n', outDir);
 
 %% 1. Segmentation
