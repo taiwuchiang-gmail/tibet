@@ -116,46 +116,63 @@ timings = struct();
 fprintf('=== Glyph pipeline | %s | dataset=%s | quick=%d | GPU=%d ===\n', stamp, cfg.dataset, cfg.quick, useGPU);
 fprintf('Results folder: %s\n', outDir);
 
-%% 1. Segmentation
+%% 1. Data: page segmentation (Tibetan) or digit dataset preparation
 t0 = tic;
-cleanImage = fullfile(projDir, 'printed_transcription_test.png');
-assert(isfile(cleanImage), ['Missing %s. It is a screenshot of the live Adarshah ' ...
-    'reader (TILO1, folio 1-1-1b text) and must be copied over with the project.'], cleanImage);
+switch cfg.dataset
+    case 'tibetan'
+        cleanImage = fullfile(projDir, 'printed_transcription_test.png');
+        assert(isfile(cleanImage), ['Missing %s. It is a screenshot of the live Adarshah ' ...
+            'reader (TILO1, folio 1-1-1b text) and must be copied over with the project.'], cleanImage);
 
-scanList = dir(fullfile(projDir, 'samples_adarshah', '*.jpg'));
-scanPages = [{fullfile(projDir, '1-1-2b.jpg')}, fullfile({scanList.folder}, {scanList.name})];
-scanOutDirs = [{fullfile(projDir, '1-1-2b_crops')}, ...
-    cellfun(@(n) fullfile(projDir, 'samples_adarshah_crops', erase(n, '.jpg')), {scanList.name}, 'UniformOutput', false)];
-cleanOutDir = fullfile(projDir, 'printed_transcription_crops');
+        scanList = dir(fullfile(projDir, 'samples_adarshah', '*.jpg'));
+        scanPages = [{fullfile(projDir, '1-1-2b.jpg')}, fullfile({scanList.folder}, {scanList.name})];
+        scanOutDirs = [{fullfile(projDir, '1-1-2b_crops')}, ...
+            cellfun(@(n) fullfile(projDir, 'samples_adarshah_crops', erase(n, '.jpg')), {scanList.name}, 'UniformOutput', false)];
+        cleanOutDir = fullfile(projDir, 'printed_transcription_crops');
 
-if cfg.resegment
-    % Wipe old crops first: crop filenames encode line/position, so a run
-    % that finds a different count would otherwise leave stale files behind.
-    for d = [scanOutDirs, {cleanOutDir}]
-        if isfolder(d{1})
-            rmdir(d{1}, 's');
+        if cfg.resegment
+            % Wipe old crops first: crop filenames encode line/position, so a run
+            % that finds a different count would otherwise leave stale files behind.
+            for d = [scanOutDirs, {cleanOutDir}]
+                if isfolder(d{1})
+                    rmdir(d{1}, 's');
+                end
+            end
+            nScanCrops = 0;
+            for i = 1:numel(scanPages)
+                r = segment_page(scanPages{i}, 'OutputDir', scanOutDirs{i});
+                fprintf('  %-40s %5d crops\n', scanPages{i}(numel(projDir)+2:end), numel(r));
+                nScanCrops = nScanCrops + numel(r);
+            end
+            rClean = segment_page(cleanImage, 'OutputDir', cleanOutDir);
+            fprintf('  %-40s %5d crops, %d lines\n', 'printed_transcription_test.png', numel(rClean), max([rClean.Line]));
+            fprintf('  total scan crops: %d\n', nScanCrops);
+        else
+            assert(all(cellfun(@isfolder, [scanOutDirs, {cleanOutDir}])), ...
+                'cfg.resegment=false but crop folders are missing; run with resegment=true once.');
+            fprintf('  reusing existing crop folders\n');
         end
-    end
-    nScanCrops = 0;
-    for i = 1:numel(scanPages)
-        r = segment_page(scanPages{i}, 'OutputDir', scanOutDirs{i});
-        fprintf('  %-40s %5d crops\n', scanPages{i}(numel(projDir)+2:end), numel(r));
-        nScanCrops = nScanCrops + numel(r);
-    end
-    rClean = segment_page(cleanImage, 'OutputDir', cleanOutDir);
-    fprintf('  %-40s %5d crops, %d lines\n', 'printed_transcription_test.png', numel(rClean), max([rClean.Line]));
-    fprintf('  total scan crops: %d\n', nScanCrops);
-else
-    assert(all(cellfun(@isfolder, [scanOutDirs, {cleanOutDir}])), ...
-        'cfg.resegment=false but crop folders are missing; run with resegment=true once.');
-    fprintf('  reusing existing crop folders\n');
+        dataDir = cleanOutDir;
+        dataTitle = 'Clean printed Tibetan text';
+    case 'digits_printed'
+        dataDir = fullfile(projDir, 'digits', 'printed');
+        if ~isfolder(dataDir)
+            make_printed_digits(dataDir);
+        end
+        dataTitle = 'Printed digits (installed fonts)';
+    case 'digits_mnist'
+        dataDir = fullfile(projDir, 'digits', 'mnist');
+        if ~isfolder(dataDir)
+            make_mnist_digits(dataDir, fullfile(projDir, 'digits', 'raw'), "test");
+        end
+        dataTitle = 'Handwritten digits (MNIST test set)';
 end
-timings.segmentation = toc(t0);
+timings.data = toc(t0);
 
 %% 2. Baseline: fully-connected ReLU+BN autoencoder on scan crops
 sz = cfg.imgSize;
 netFC = [];
-if cfg.runFCBaseline
+if cfg.runFCBaseline && strcmp(cfg.dataset, 'tibetan')
     t0 = tic;
     [Xn, ~] = load_crop_dataset({fullfile(projDir, '1-1-2b_crops'), fullfile(projDir, 'samples_adarshah_crops')}, sz, cfg.fcMaxSamples);
     Xn = Xn';
@@ -172,9 +189,13 @@ if cfg.runFCBaseline
     fprintf('Stage 2: FC baseline trained on %d scan crops, recon MSE=%.5f (%.0fs)\n', size(Xn, 1), mseFC, timings.fcBaseline);
 end
 
-%% 3. Convolutional autoencoder on clean crops
+%% 3. Convolutional autoencoder on clean crops / digits
 t0 = tic;
-[Xp, metaP] = load_crop_dataset({cleanOutDir}, sz, Inf);
+[Xp, metaP] = load_crop_dataset({dataDir}, sz, cfg.maxSamples);
+labels = [];
+if isDigits
+    labels = folder_labels(metaP);
+end
 imgs = reshape(Xp, sz, sz, 1, []);
 if useGPU
     imgs = gpuArray(imgs);
@@ -185,7 +206,7 @@ convOpts = trainingOptions('adam', ...
 [netConvT, infoConv] = trainnet(imgs, imgs, build_conv_autoencoder(sz), "mse", convOpts);
 mseConv = gather(mean((predict(netConvT, imgs) - imgs).^2, 'all'));
 timings.convAE = toc(t0);
-fprintf('Stage 3: conv AE trained on %d clean crops, recon MSE=%.5f (%.0fs)\n', size(imgs, 4), mseConv, timings.convAE);
+fprintf('Stage 3: conv AE trained on %d images (%s), recon MSE=%.5f (%.0fs)\n', size(imgs, 4), dataTitle, mseConv, timings.convAE);
 
 figure(1);
 hConv = infoConv.TrainingHistory;
@@ -269,7 +290,7 @@ t0 = tic;
 fCC = gather(squeeze(predict(netCC, imgs, 'Outputs', 'bottleneck')));
 rng(0);
 Ycc = tsne(fCC', 'Perplexity', 30);
-render_tsne_canvas(Ycc, metaP, struct('FigNum', 3, 'Title', 'Clean printed text: conv encoder + contrastive (netCC)'));
+render_tsne_canvas(Ycc, metaP, struct('FigNum', 3, 'Title', [dataTitle ': conv encoder + contrastive (netCC)']));
 exportgraphics(figure(3), fullfile(outDir, 'fig3_tsne_netCC.png'), 'Resolution', 200);
 
 regions = find_dense_regions(Ycc, cfg.numClusterMontages);
