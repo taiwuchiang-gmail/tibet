@@ -36,8 +36,10 @@
 %     run_tibet_pipeline
 %     cfgOverride = struct('dataset', 'digits_mnist');     % handwritten digits
 %     run_tibet_pipeline
-%     cfgOverride = struct('dataset', 'digits_mnist', 'bottleneck', 'grid2', 'labelsPerClass', 10);
-%     run_tibet_pipeline                       % 2x2 bottleneck + 10 labels per digit
+%     cfgOverride = struct('dataset', 'digits_mnist', 'labelsPerClass', 10);
+%     run_tibet_pipeline                       % + 10 known labels per digit (SupCon)
+%     cfgOverride = struct('dataset', 'digits_mnist', 'bottleneck', 'gap');
+%     run_tibet_pipeline                       % old global-average-pool bottleneck
 %
 %   printed_transcription_test.png must already exist: it is a screenshot
 %   of the live Adarshah reader (text under folio 1-1-1b of TILO1), not
@@ -54,8 +56,9 @@ cfg.runFCBaseline  = false;
 cfg.imgSize        = 32;
 % 'gap':   global average pool of the 8x8x32 map, 32-d. Throws away where
 %          strokes are, so 0/6/9 collapse together.
-% 'grid2': 4x4 average pool to a 2x2x32 map, 128-d. Keeps coarse stroke layout.
-cfg.bottleneck     = 'gap';
+% 'grid2': 4x4 average pool to a 2x2x32 map, 128-d. Keeps coarse stroke layout,
+%          at a small cost in shift invariance.
+cfg.bottleneck     = 'grid2';
 cfg.labelsPerClass = 0;         % digits only: >0 trains stage 4 with supcon_loss on this many known labels per class
 cfg.labeledPerBatch = 64;       % labeled samples added to every contrastive batch when labelsPerClass > 0
 cfg.fcMaxSamples   = 4000;
@@ -111,11 +114,14 @@ stamp = string(datetime('now', 'Format', 'yyyyMMdd_HHmmss'));
 if isDigits
     stamp = stamp + "_" + cfg.dataset;
 end
-if ~strcmp(cfg.bottleneck, 'gap')
+if ~strcmp(cfg.bottleneck, 'grid2')
     stamp = stamp + "_" + cfg.bottleneck;
 end
 if cfg.labelsPerClass > 0
     stamp = stamp + sprintf("_L%d", cfg.labelsPerClass);
+end
+if cfg.seed ~= 1
+    stamp = stamp + sprintf("_s%d", cfg.seed);
 end
 if cfg.quick
     stamp = stamp + "_quick";
