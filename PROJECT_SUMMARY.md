@@ -52,8 +52,11 @@ K-means cluster holding the most 0s.
   kNN 0.965 → 0.973. Printed: purity 0.667 → 0.855. Cost: shift-invariance worst case drops ~0.03-0.04
   (Tibetan 0.977 → 0.941). `'gap'` is still available.
 - **Semi-supervised SupCon** (`supcon_loss.m`, `cfg.labelsPerClass`): known same-class samples become extra
-  positives. With 1/10/50 labels per digit (seed 1) kNN rose about 0.005 and purity did not improve;
-  see `results/sweep_bottleneck_labels.csv` and `results/sweep_label_seeds.csv`.
+  positives. MNIST grid2, mean of seeds 1-3, labels per digit 0 / 1 / 10 / 50: kNN 0.9745 / 0.9763 / 0.9774 / 0.9780
+  (small but consistent; seed spread ~0.002), purity 0.664 / 0.678 / 0.693 / 0.665 and NMI 0.572 / 0.594 / 0.609 / 0.594
+  (spread with labels 0.60-0.74, e.g. seed 3 at 50 labels merged 0 and 6 into one cluster).
+  Labels don't reliably clean the 0 cluster further; the pooling fix did most of the work.
+  See `results/sweep_bottleneck_labels.csv` and `results/sweep_label_seeds.csv`.
 
 ## Key findings
 1. Segmentation fragmentation on real scans is a **scan-quality** problem (faint/broken strokes), not a bug —
