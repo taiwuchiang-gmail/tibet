@@ -1,0 +1,252 @@
+﻿
+	Home License -- for personal use only.  Not for government,
+	academic, research, commercial, or other organizational use.
+
+=== Glyph pipeline | 20261023_052506_digits_printed | dataset=digits_printed | bottleneck=gap | labelsPerClass=0 | quick=0 | GPU=1 ===
+Results folder: C:\Users\tchiang\code\tibet\results\20261023_052506_digits_printed
+Stage 3: conv AE trained on 2550 images (Printed digits (installed fonts)), recon MSE=0.01573 (27s)
+[Warning: Scrollable is set to 'on' on all figures because the Windows accessibility text size setting is greater than 100%.
+To prevent this behavior, revert the text size setting back to 100% and instead use the Windows system display scale setting to increase the size of on-screen
+elements.] 
+  contrastive epoch   1/60  loss=5.3890  (4s)
+  contrastive epoch  10/60  loss=2.6399  (7s)
+  contrastive epoch  20/60  loss=2.1072  (10s)
+  contrastive epoch  30/60  loss=1.8665  (13s)
+  contrastive epoch  40/60  loss=1.7433  (16s)
+  contrastive epoch  50/60  loss=1.6090  (19s)
+  contrastive epoch  60/60  loss=1.5193  (22s)
+Stage 4: contrastive fine-tuning done, final loss=1.5193 (22s)
+Stage 5: invariance (cosine sim to unperturbed glyph; mean / worst-case)
+  Conv AE (recon only)         shift 0.979 / 0.922   scale 0.962 / 0.897
+  Conv + contrastive (netCC)   shift 0.998 / 0.995   scale 0.994 / 0.977
+Stage 6: t-SNE + 4 cluster montages (12s)
+Stage 6b: label scores on 2550 unlabeled samples (5-NN leave-one-out accuracy | K-means k=10 purity / NMI | cluster holding most 0s: 0s/6s/9s/other) (6s)
+  Raw pixels (baseline)        kNN 0.949   purity 0.885   NMI 0.777   0-cluster 224/18/11/14
+  Conv AE (recon only)         kNN 0.946   purity 0.748   NMI 0.680   0-cluster 186/3/8/1
+  Conv + contrastive (netCC)   kNN 0.960   purity 0.667   NMI 0.617   0-cluster 143/39/37/19
+=== Done. Metrics, figures, models.mat and run_log.txt are in:
+    C:\Users\tchiang\code\tibet\results\20261023_052506_digits_printed
+=== Glyph pipeline | 20261023_052624_digits_printed_grid2 | dataset=digits_printed | bottleneck=grid2 | labelsPerClass=0 | quick=0 | GPU=1 ===
+Results folder: C:\Users\tchiang\code\tibet\results\20261023_052624_digits_printed_grid2
+Stage 3: conv AE trained on 2550 images (Printed digits (installed fonts)), recon MSE=0.00623 (19s)
+  contrastive epoch   1/60  loss=4.9847  (1s)
+  contrastive epoch  10/60  loss=2.7036  (4s)
+  contrastive epoch  20/60  loss=2.3212  (7s)
+  contrastive epoch  30/60  loss=2.0009  (10s)
+  contrastive epoch  40/60  loss=1.8212  (13s)
+  contrastive epoch  50/60  loss=1.7545  (16s)
+  contrastive epoch  60/60  loss=1.6249  (20s)
+Stage 4: contrastive fine-tuning done, final loss=1.6249 (20s)
+Stage 5: invariance (cosine sim to unperturbed glyph; mean / worst-case)
+  Conv AE (recon only)         shift 0.964 / 0.902   scale 0.970 / 0.926
+  Conv + contrastive (netCC)   shift 0.983 / 0.961   scale 0.983 / 0.957
+Stage 6: t-SNE + 4 cluster montages (10s)
+Stage 6b: label scores on 2550 unlabeled samples (5-NN leave-one-out accuracy | K-means k=10 purity / NMI | cluster holding most 0s: 0s/6s/9s/other) (4s)
+  Raw pixels (baseline)        kNN 0.949   purity 0.885   NMI 0.777   0-cluster 224/18/11/14
+  Conv AE (recon only)         kNN 0.956   purity 0.679   NMI 0.631   0-cluster 139/1/180/5
+  Conv + contrastive (netCC)   kNN 0.974   purity 0.855   NMI 0.754   0-cluster 220/6/4/4
+=== Done. Metrics, figures, models.mat and run_log.txt are in:
+    C:\Users\tchiang\code\tibet\results\20261023_052624_digits_printed_grid2
+=== Glyph pipeline | 20261023_052723_digits_mnist | dataset=digits_mnist | bottleneck=gap | labelsPerClass=0 | quick=0 | GPU=1 ===
+Results folder: C:\Users\tchiang\code\tibet\results\20261023_052723_digits_mnist
+Stage 3: conv AE trained on 10000 images (Handwritten digits (MNIST test set)), recon MSE=0.01409 (60s)
+  contrastive epoch   1/60  loss=3.6164  (2s)
+  contrastive epoch  10/60  loss=1.4229  (11s)
+  contrastive epoch  20/60  loss=1.1491  (23s)
+  contrastive epoch  30/60  loss=1.0259  (37s)
+  contrastive epoch  40/60  loss=0.9583  (48s)
+  contrastive epoch  50/60  loss=0.9162  (59s)
+  contrastive epoch  60/60  loss=0.8960  (70s)
+Stage 4: contrastive fine-tuning done, final loss=0.8960 (70s)
+Stage 5: invariance (cosine sim to unperturbed glyph; mean / worst-case)
+  Conv AE (recon only)         shift 0.976 / 0.933   scale 0.963 / 0.901
+  Conv + contrastive (netCC)   shift 0.997 / 0.993   scale 0.994 / 0.986
+Stage 6: t-SNE + 4 cluster montages (17s)
+Stage 6b: label scores on 10000 unlabeled samples (5-NN leave-one-out accuracy | K-means k=10 purity / NMI | cluster holding most 0s: 0s/6s/9s/other) (11s)
+  Raw pixels (baseline)        kNN 0.962   purity 0.632   NMI 0.554   0-cluster 866/32/11/88
+  Conv AE (recon only)         kNN 0.965   purity 0.584   NMI 0.497   0-cluster 827/29/10/71
+  Conv + contrastive (netCC)   kNN 0.965   purity 0.445   NMI 0.380   0-cluster 380/134/85/272
+=== Done. Metrics, figures, models.mat and run_log.txt are in:
+    C:\Users\tchiang\code\tibet\results\20261023_052723_digits_mnist
+=== Glyph pipeline | 20261023_053005_digits_mnist_grid2 | dataset=digits_mnist | bottleneck=grid2 | labelsPerClass=0 | quick=0 | GPU=1 ===
+Results folder: C:\Users\tchiang\code\tibet\results\20261023_053005_digits_mnist_grid2
+Stage 3: conv AE trained on 10000 images (Handwritten digits (MNIST test set)), recon MSE=0.00743 (60s)
+  contrastive epoch   1/60  loss=3.6574  (2s)
+  contrastive epoch  10/60  loss=1.5042  (16s)
+  contrastive epoch  20/60  loss=1.2270  (32s)
+  contrastive epoch  30/60  loss=1.1061  (47s)
+  contrastive epoch  40/60  loss=1.0366  (59s)
+  contrastive epoch  50/60  loss=0.9909  (71s)
+  contrastive epoch  60/60  loss=0.9528  (84s)
+Stage 4: contrastive fine-tuning done, final loss=0.9528 (84s)
+Stage 5: invariance (cosine sim to unperturbed glyph; mean / worst-case)
+  Conv AE (recon only)         shift 0.968 / 0.924   scale 0.966 / 0.900
+  Conv + contrastive (netCC)   shift 0.981 / 0.958   scale 0.980 / 0.947
+Stage 6: t-SNE + 4 cluster montages (17s)
+Stage 6b: label scores on 10000 unlabeled samples (5-NN leave-one-out accuracy | K-means k=10 purity / NMI | cluster holding most 0s: 0s/6s/9s/other) (11s)
+  Raw pixels (baseline)        kNN 0.962   purity 0.632   NMI 0.554   0-cluster 866/32/11/88
+  Conv AE (recon only)         kNN 0.962   purity 0.583   NMI 0.497   0-cluster 810/66/20/177
+  Conv + contrastive (netCC)   kNN 0.973   purity 0.672   NMI 0.577   0-cluster 861/24/5/54
+=== Done. Metrics, figures, models.mat and run_log.txt are in:
+    C:\Users\tchiang\code\tibet\results\20261023_053005_digits_mnist_grid2
+=== Glyph pipeline | 20261023_053303 | dataset=tibetan | bottleneck=gap | labelsPerClass=0 | quick=0 | GPU=1 ===
+Results folder: C:\Users\tchiang\code\tibet\results\20261023_053303
+  reusing existing crop folders
+Stage 3: conv AE trained on 853 images (Clean printed Tibetan text), recon MSE=0.01502 (25s)
+  contrastive epoch   1/60  loss=3.9623  (1s)
+  contrastive epoch  10/60  loss=1.4712  (5s)
+  contrastive epoch  20/60  loss=1.0998  (9s)
+  contrastive epoch  30/60  loss=0.9956  (13s)
+  contrastive epoch  40/60  loss=0.8974  (16s)
+  contrastive epoch  50/60  loss=0.8859  (20s)
+  contrastive epoch  60/60  loss=0.7577  (24s)
+Stage 4: contrastive fine-tuning done, final loss=0.7577 (24s)
+Stage 5: invariance (cosine sim to unperturbed glyph; mean / worst-case)
+  Conv AE (recon only)         shift 0.952 / 0.858   scale 0.944 / 0.859
+  Conv + contrastive (netCC)   shift 0.992 / 0.977   scale 0.985 / 0.957
+Stage 6: t-SNE + 4 cluster montages (8s)
+=== Done. Metrics, figures, models.mat and run_log.txt are in:
+    C:\Users\tchiang\code\tibet\results\20261023_053303
+=== Glyph pipeline | 20261023_053403_grid2 | dataset=tibetan | bottleneck=grid2 | labelsPerClass=0 | quick=0 | GPU=1 ===
+Results folder: C:\Users\tchiang\code\tibet\results\20261023_053403_grid2
+  reusing existing crop folders
+Stage 3: conv AE trained on 853 images (Clean printed Tibetan text), recon MSE=0.00922 (22s)
+  contrastive epoch   1/60  loss=3.3720  (1s)
+  contrastive epoch  10/60  loss=1.2604  (4s)
+  contrastive epoch  20/60  loss=0.9881  (8s)
+  contrastive epoch  30/60  loss=0.8947  (11s)
+  contrastive epoch  40/60  loss=0.8281  (15s)
+  contrastive epoch  50/60  loss=0.7334  (19s)
+  contrastive epoch  60/60  loss=0.6842  (23s)
+Stage 4: contrastive fine-tuning done, final loss=0.6842 (23s)
+Stage 5: invariance (cosine sim to unperturbed glyph; mean / worst-case)
+  Conv AE (recon only)         shift 0.963 / 0.905   scale 0.960 / 0.894
+  Conv + contrastive (netCC)   shift 0.975 / 0.941   scale 0.968 / 0.907
+Stage 6: t-SNE + 4 cluster montages (8s)
+=== Done. Metrics, figures, models.mat and run_log.txt are in:
+    C:\Users\tchiang\code\tibet\results\20261023_053403_grid2
+=== Glyph pipeline | 20261023_053500_digits_mnist_L10 | dataset=digits_mnist | bottleneck=gap | labelsPerClass=10 | quick=0 | GPU=1 ===
+Results folder: C:\Users\tchiang\code\tibet\results\20261023_053500_digits_mnist_L10
+Stage 3: conv AE trained on 10000 images (Handwritten digits (MNIST test set)), recon MSE=0.01871 (71s)
+Stage 4: 100 labeled samples (10 per class), 64 added to each batch of 256
+  contrastive epoch   1/60  loss=4.3386  (2s)
+  contrastive epoch  10/60  loss=2.3169  (12s)
+  contrastive epoch  20/60  loss=2.0155  (22s)
+  contrastive epoch  30/60  loss=1.9211  (35s)
+  contrastive epoch  40/60  loss=1.8337  (50s)
+  contrastive epoch  50/60  loss=1.7686  (68s)
+  contrastive epoch  60/60  loss=1.7342  (84s)
+Stage 4: contrastive fine-tuning done, final loss=1.7342 (84s)
+Stage 5: invariance (cosine sim to unperturbed glyph; mean / worst-case)
+  Conv AE (recon only)         shift 0.975 / 0.939   scale 0.964 / 0.908
+  Conv + contrastive (netCC)   shift 0.996 / 0.990   scale 0.993 / 0.983
+Stage 6: t-SNE + 4 cluster montages (20s)
+Stage 6b: label scores on 9900 unlabeled samples (5-NN leave-one-out accuracy | K-means k=10 purity / NMI | cluster holding most 0s: 0s/6s/9s/other) (11s)
+  Raw pixels (baseline)        kNN 0.962   purity 0.615   NMI 0.536   0-cluster 867/35/11/86
+  Conv AE (recon only)         kNN 0.962   purity 0.600   NMI 0.505   0-cluster 850/95/14/129
+  Conv + contrastive (netCC)   kNN 0.969   purity 0.493   NMI 0.415   0-cluster 355/505/3/216
+=== Done. Metrics, figures, models.mat and run_log.txt are in:
+    C:\Users\tchiang\code\tibet\results\20261023_053500_digits_mnist_L10
+=== Glyph pipeline | 20261023_053812_digits_mnist_grid2_L1 | dataset=digits_mnist | bottleneck=grid2 | labelsPerClass=1 | quick=0 | GPU=1 ===
+Results folder: C:\Users\tchiang\code\tibet\results\20261023_053812_digits_mnist_grid2_L1
+Stage 3: conv AE trained on 10000 images (Handwritten digits (MNIST test set)), recon MSE=0.00816 (67s)
+Stage 4: 10 labeled samples (1 per class), 64 added to each batch of 256
+  contrastive epoch   1/60  loss=3.7750  (2s)
+  contrastive epoch  10/60  loss=1.8672  (15s)
+  contrastive epoch  20/60  loss=1.6187  (30s)
+  contrastive epoch  30/60  loss=1.5020  (42s)
+  contrastive epoch  40/60  loss=1.4267  (55s)
+  contrastive epoch  50/60  loss=1.3918  (68s)
+  contrastive epoch  60/60  loss=1.3611  (78s)
+Stage 4: contrastive fine-tuning done, final loss=1.3611 (78s)
+Stage 5: invariance (cosine sim to unperturbed glyph; mean / worst-case)
+  Conv AE (recon only)         shift 0.967 / 0.925   scale 0.965 / 0.899
+  Conv + contrastive (netCC)   shift 0.977 / 0.925   scale 0.980 / 0.939
+Stage 6: t-SNE + 4 cluster montages (16s)
+Stage 6b: label scores on 9990 unlabeled samples (5-NN leave-one-out accuracy | K-means k=10 purity / NMI | cluster holding most 0s: 0s/6s/9s/other) (11s)
+  Raw pixels (baseline)        kNN 0.962   purity 0.614   NMI 0.536   0-cluster 871/35/10/90
+  Conv AE (recon only)         kNN 0.960   purity 0.571   NMI 0.490   0-cluster 790/67/17/145
+  Conv + contrastive (netCC)   kNN 0.974   purity 0.675   NMI 0.588   0-cluster 848/62/7/60
+=== Done. Metrics, figures, models.mat and run_log.txt are in:
+    C:\Users\tchiang\code\tibet\results\20261023_053812_digits_mnist_grid2_L1
+=== Glyph pipeline | 20261023_054110_digits_mnist_grid2_L10 | dataset=digits_mnist | bottleneck=grid2 | labelsPerClass=10 | quick=0 | GPU=1 ===
+Results folder: C:\Users\tchiang\code\tibet\results\20261023_054110_digits_mnist_grid2_L10
+Stage 3: conv AE trained on 10000 images (Handwritten digits (MNIST test set)), recon MSE=0.00838 (54s)
+Stage 4: 100 labeled samples (10 per class), 64 added to each batch of 256
+  contrastive epoch   1/60  loss=4.3351  (1s)
+  contrastive epoch  10/60  loss=2.4302  (10s)
+  contrastive epoch  20/60  loss=2.1220  (20s)
+  contrastive epoch  30/60  loss=1.9893  (31s)
+  contrastive epoch  40/60  loss=1.8924  (41s)
+  contrastive epoch  50/60  loss=1.8321  (51s)
+  contrastive epoch  60/60  loss=1.7863  (61s)
+Stage 4: contrastive fine-tuning done, final loss=1.7863 (61s)
+Stage 5: invariance (cosine sim to unperturbed glyph; mean / worst-case)
+  Conv AE (recon only)         shift 0.967 / 0.922   scale 0.966 / 0.894
+  Conv + contrastive (netCC)   shift 0.978 / 0.950   scale 0.977 / 0.936
+Stage 6: t-SNE + 4 cluster montages (17s)
+Stage 6b: label scores on 9900 unlabeled samples (5-NN leave-one-out accuracy | K-means k=10 purity / NMI | cluster holding most 0s: 0s/6s/9s/other) (11s)
+  Raw pixels (baseline)        kNN 0.962   purity 0.615   NMI 0.536   0-cluster 867/35/11/86
+  Conv AE (recon only)         kNN 0.961   purity 0.583   NMI 0.502   0-cluster 809/70/17/171
+  Conv + contrastive (netCC)   kNN 0.978   purity 0.644   NMI 0.572   0-cluster 730/6/3/75
+=== Done. Metrics, figures, models.mat and run_log.txt are in:
+    C:\Users\tchiang\code\tibet\results\20261023_054110_digits_mnist_grid2_L10
+=== Glyph pipeline | 20261023_054338_digits_mnist_grid2_L50 | dataset=digits_mnist | bottleneck=grid2 | labelsPerClass=50 | quick=0 | GPU=1 ===
+Results folder: C:\Users\tchiang\code\tibet\results\20261023_054338_digits_mnist_grid2_L50
+Stage 3: conv AE trained on 10000 images (Handwritten digits (MNIST test set)), recon MSE=0.00792 (57s)
+Stage 4: 500 labeled samples (50 per class), 64 added to each batch of 256
+  contrastive epoch   1/60  loss=4.4565  (1s)
+  contrastive epoch  10/60  loss=2.7700  (11s)
+  contrastive epoch  20/60  loss=2.5523  (21s)
+  contrastive epoch  30/60  loss=2.4473  (32s)
+  contrastive epoch  40/60  loss=2.3712  (45s)
+  contrastive epoch  50/60  loss=2.3485  (57s)
+  contrastive epoch  60/60  loss=2.3102  (70s)
+Stage 4: contrastive fine-tuning done, final loss=2.3102 (70s)
+Stage 5: invariance (cosine sim to unperturbed glyph; mean / worst-case)
+  Conv AE (recon only)         shift 0.968 / 0.929   scale 0.965 / 0.900
+  Conv + contrastive (netCC)   shift 0.974 / 0.947   scale 0.974 / 0.919
+Stage 6: t-SNE + 4 cluster montages (18s)
+Stage 6b: label scores on 9500 unlabeled samples (5-NN leave-one-out accuracy | K-means k=10 purity / NMI | cluster holding most 0s: 0s/6s/9s/other) (11s)
+  Raw pixels (baseline)        kNN 0.961   purity 0.607   NMI 0.550   0-cluster 818/33/10/87
+  Conv AE (recon only)         kNN 0.958   purity 0.574   NMI 0.484   0-cluster 762/58/15/143
+  Conv + contrastive (netCC)   kNN 0.975   purity 0.596   NMI 0.538   0-cluster 707/7/16/71
+=== Done. Metrics, figures, models.mat and run_log.txt are in:
+    C:\Users\tchiang\code\tibet\results\20261023_054338_digits_mnist_grid2_L50
+=== Glyph pipeline | 20261023_054621_digits_printed_grid2_L10 | dataset=digits_printed | bottleneck=grid2 | labelsPerClass=10 | quick=0 | GPU=1 ===
+Results folder: C:\Users\tchiang\code\tibet\results\20261023_054621_digits_printed_grid2_L10
+Stage 3: conv AE trained on 2550 images (Printed digits (installed fonts)), recon MSE=0.00610 (15s)
+Stage 4: 100 labeled samples (10 per class), 64 added to each batch of 256
+  contrastive epoch   1/60  loss=5.3289  (1s)
+  contrastive epoch  10/60  loss=3.5591  (3s)
+  contrastive epoch  20/60  loss=3.2587  (5s)
+  contrastive epoch  30/60  loss=3.0307  (8s)
+  contrastive epoch  40/60  loss=2.9179  (10s)
+  contrastive epoch  50/60  loss=2.8286  (13s)
+  contrastive epoch  60/60  loss=2.7045  (15s)
+Stage 4: contrastive fine-tuning done, final loss=2.7045 (15s)
+Stage 5: invariance (cosine sim to unperturbed glyph; mean / worst-case)
+  Conv AE (recon only)         shift 0.964 / 0.907   scale 0.970 / 0.929
+  Conv + contrastive (netCC)   shift 0.984 / 0.954   scale 0.983 / 0.949
+Stage 6: t-SNE + 4 cluster montages (9s)
+Stage 6b: label scores on 2450 unlabeled samples (5-NN leave-one-out accuracy | K-means k=10 purity / NMI | cluster holding most 0s: 0s/6s/9s/other) (4s)
+  Raw pixels (baseline)        kNN 0.947   purity 0.881   NMI 0.772   0-cluster 214/21/11/15
+  Conv AE (recon only)         kNN 0.958   purity 0.712   NMI 0.622   0-cluster 160/47/44/63
+  Conv + contrastive (netCC)   kNN 0.976   purity 0.848   NMI 0.752   0-cluster 209/4/25/5
+=== Done. Metrics, figures, models.mat and run_log.txt are in:
+    C:\Users\tchiang\code\tibet\results\20261023_054621_digits_printed_grid2_L10
+                        run                              dataset          bottleneck    labelsPerClass    shiftMean    shiftWorst    scaleMean    scaleWorst      knn      purity       nmi      zc0    zc6    zc9    zcOther
+    ____________________________________________    __________________    __________    ______________    _________    __________    _________    __________    _______    _______    _______    ___    ___    ___    _______
+
+    {'20261023_052506_digits_printed'          }    {'digits_printed'}    {'gap'  }            0           0.99782      0.99499       0.99396      0.97741         0.96    0.66667    0.61672    143     39     37       19  
+    {'20261023_052624_digits_printed_grid2'    }    {'digits_printed'}    {'grid2'}            0           0.98337      0.96111       0.98305      0.95738      0.97373    0.85451    0.75437    220      6      4        4  
+    {'20261023_052723_digits_mnist'            }    {'digits_mnist'  }    {'gap'  }            0           0.99732      0.99273       0.99393      0.98553        0.965     0.4454    0.37957    380    134     85      272  
+    {'20261023_053005_digits_mnist_grid2'      }    {'digits_mnist'  }    {'grid2'}            0           0.98097      0.95842       0.98013      0.94747       0.9732     0.6717    0.57714    861     24      5       54  
+    {'20261023_053303'                         }    {'tibetan'       }    {'gap'  }            0           0.99184      0.97679       0.98458      0.95728          NaN        NaN        NaN    NaN    NaN    NaN      NaN  
+    {'20261023_053403_grid2'                   }    {'tibetan'       }    {'grid2'}            0           0.97455      0.94076       0.96811       0.9073          NaN        NaN        NaN    NaN    NaN    NaN      NaN  
+    {'20261023_053500_digits_mnist_L10'        }    {'digits_mnist'  }    {'gap'  }           10           0.99595      0.99034       0.99264      0.98259      0.96949    0.49333    0.41533    355    505      3      216  
+    {'20261023_053812_digits_mnist_grid2_L1'   }    {'digits_mnist'  }    {'grid2'}            1           0.97727      0.92502       0.98033       0.9387      0.97447    0.67477    0.58838    848     62      7       60  
+    {'20261023_054110_digits_mnist_grid2_L10'  }    {'digits_mnist'  }    {'grid2'}           10            0.9778      0.95017       0.97684      0.93591      0.97778    0.64384    0.57152    730      6      3       75  
+    {'20261023_054338_digits_mnist_grid2_L50'  }    {'digits_mnist'  }    {'grid2'}           50           0.97423      0.94705       0.97431      0.91897      0.97453    0.59632    0.53785    707      7     16       71  
+    {'20261023_054621_digits_printed_grid2_L10'}    {'digits_printed'}    {'grid2'}           10           0.98362      0.95444       0.98318      0.94895      0.97633    0.84776    0.75156    209      4     25        5  
+

@@ -11,7 +11,7 @@ then find a way to label them.
 ## What's built
 - **`segment_page.m`** — page-frame detection, adaptive glyph-size filtering, rule-line removal
   (morphological opening), line-band detection via row-projection valleys.
-- **Feature learning** — conv autoencoder (conv+BN+ReLU+maxpool ×3, global-average-pool bottleneck,
+- **Feature learning** — conv autoencoder (conv+BN+ReLU+maxpool ×3, 2x2 average-pool bottleneck,
   transposed-conv decoder), then NT-Xent contrastive fine-tuning with a projection head
   (`ntxent_loss.m`, `contrastive_model_loss.m`, `augment_glyph.m`, `make_contrastive_batch_img.m`).
   The result, **`netCC`**, is the best encoder so far.
@@ -39,6 +39,24 @@ then find a way to label them.
   `imbinarize`, Canny/`hough`, `bwconncomp`, `bwareaopen` have no gpuArray support, and gpuArray `imrotate` was rejected because
   it rounds differently and changes components. Segmentation is CPU/PNG-write bound either way.
 - No gpuArray support either: `tsne`, `imtranslate` (single), grayscale `imdilate`/`imerode`. `bwareaopen` needs a double P.
+
+## Digit benchmarks (2026-10-23)
+Labeled sanity checks for the unsupervised features: `cfgOverride = struct('dataset', 'digits_printed')`
+(0-9 in 255 installed fonts, 2,550 images) or `'digits_mnist'` (MNIST test set, 10,000 images).
+Scored by 5-NN leave-one-out accuracy, K-means (k=10) purity / NMI, and the contents of the
+K-means cluster holding the most 0s.
+- **6s and 9s merged into the 0 cluster** because the global-average-pool bottleneck keeps *which*
+  stroke patterns occur but not *where* (`scratch/diagnose_069_confusion.m`).
+- **Fix: `cfg.bottleneck = 'grid2'`** (now the default), a 2x2 average pool → 128-d. MNIST netCC:
+  0-cluster 380 zeros / 134 sixes / 85 nines / 272 other → 861 / 24 / 5 / 54, purity 0.445 → 0.672,
+  kNN 0.965 → 0.973. Printed: purity 0.667 → 0.855. Cost: shift-invariance worst case drops ~0.03-0.04
+  (Tibetan 0.977 → 0.941). `'gap'` is still available.
+- **Semi-supervised SupCon** (`supcon_loss.m`, `cfg.labelsPerClass`): known same-class samples become extra
+  positives. MNIST grid2, mean of seeds 1-3, labels per digit 0 / 1 / 10 / 50: kNN 0.9745 / 0.9763 / 0.9774 / 0.9780
+  (small but consistent; seed spread ~0.002), purity 0.664 / 0.678 / 0.693 / 0.665 and NMI 0.572 / 0.594 / 0.609 / 0.594
+  (spread with labels 0.60-0.74, e.g. seed 3 at 50 labels merged 0 and 6 into one cluster).
+  Labels don't reliably clean the 0 cluster further; the pooling fix did most of the work.
+  See `results/sweep_bottleneck_labels.csv` and `results/sweep_label_seeds.csv`.
 
 ## Key findings
 1. Segmentation fragmentation on real scans is a **scan-quality** problem (faint/broken strokes), not a bug —

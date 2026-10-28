@@ -1,16 +1,28 @@
 %RUN_TIBET_PIPELINE Reproduce the verified Tibetan glyph pipeline end to end.
 %
 %   Stages (each one was verified interactively before being added here):
-%     1. Segment pages into glyph crops (segment_page.m)
+%     1. Data. For cfg.dataset = 'tibetan' (default), segment pages into
+%        glyph crops (segment_page.m):
 %          - real woodblock scans: 1-1-2b.jpg + samples_adarshah/*.jpg
 %          - clean printed transcription: printed_transcription_test.png
-%     2. (Optional, off by default: cfg.runFCBaseline) fully-connected
-%        ReLU+BN autoencoder on the scan crops, only useful to re-show
-%        the conv-vs-FC invariance comparison
-%     3. Convolutional autoencoder on the clean crops (reconstruction only)
-%     4. Contrastive (NT-Xent) fine-tuning of the conv encoder -> netCC
+%        For the digit datasets, build digits/<set>/<label>/*.png once
+%        if missing:
+%          - 'digits_printed': 0-9 in every usable installed font
+%            (make_printed_digits.m)
+%          - 'digits_mnist': handwritten MNIST test set (make_mnist_digits.m)
+%     2. (Optional, off by default: cfg.runFCBaseline, Tibetan only)
+%        fully-connected ReLU+BN autoencoder on the scan crops, only
+%        useful to re-show the conv-vs-FC invariance comparison
+%     3. Convolutional autoencoder on the clean crops / digits (reconstruction
+%        only), bottleneck pooling set by cfg.bottleneck
+%     4. Contrastive (NT-Xent) fine-tuning of the conv encoder -> netCC.
+%        Digits with cfg.labelsPerClass > 0: semi-supervised SupCon instead
+%        (supcon_loss.m), with that many known labels per class
 %     5. Shift/scale invariance measurement for every model
-%     6. t-SNE of netCC features on clean crops + densest-cluster montages
+%     6. t-SNE of netCC features + densest-cluster montages. Digits also
+%        get a t-SNE colored by true label and label-based scores:
+%        leave-one-out kNN accuracy, and K-means purity / NMI (purity =
+%        accuracy of labeling every cluster with its majority label).
 %     7. Summary: metrics.txt, figures, models.mat in results/<timestamp>/
 %
 %   NOT included: alignment-based auto-labeling (blocked, wrong results)
@@ -20,6 +32,14 @@
 %     run_tibet_pipeline                       % full run
 %     cfgOverride = struct('quick', true);     % smoke test, a few epochs
 %     run_tibet_pipeline
+%     cfgOverride = struct('dataset', 'digits_printed');   % printed digits
+%     run_tibet_pipeline
+%     cfgOverride = struct('dataset', 'digits_mnist');     % handwritten digits
+%     run_tibet_pipeline
+%     cfgOverride = struct('dataset', 'digits_mnist', 'labelsPerClass', 10);
+%     run_tibet_pipeline                       % + 10 known labels per digit (SupCon)
+%     cfgOverride = struct('dataset', 'digits_mnist', 'bottleneck', 'gap');
+%     run_tibet_pipeline                       % old global-average-pool bottleneck
 %
 %   printed_transcription_test.png must already exist: it is a screenshot
 %   of the live Adarshah reader (text under folio 1-1-1b of TILO1), not
@@ -27,10 +47,20 @@
 
 %% 0. Configuration
 cfg = struct();
+cfg.dataset        = 'tibetan'; % 'tibetan' | 'digits_printed' | 'digits_mnist'
 cfg.quick          = false;
+cfg.maxSamples     = Inf;       % cap on images used in stages 3-6
+cfg.knnK           = 5;         % digits only: neighbours for the kNN score
 cfg.resegment      = true;
 cfg.runFCBaseline  = false;
 cfg.imgSize        = 32;
+% 'gap':   global average pool of the 8x8x32 map, 32-d. Throws away where
+%          strokes are, so 0/6/9 collapse together.
+% 'grid2': 4x4 average pool to a 2x2x32 map, 128-d. Keeps coarse stroke layout,
+%          at a small cost in shift invariance.
+cfg.bottleneck     = 'grid2';
+cfg.labelsPerClass = 0;         % digits only: >0 trains stage 4 with supcon_loss on this many known labels per class
+cfg.labeledPerBatch = 64;       % labeled samples added to every contrastive batch when labelsPerClass > 0
 cfg.fcMaxSamples   = 4000;
 cfg.fcEpochs       = 300;
 cfg.convEpochs     = 150;
@@ -40,26 +70,59 @@ cfg.contrastLR     = 1e-3;
 cfg.tau            = 0.1;
 cfg.seed           = 1;
 cfg.numClusterMontages = 4;
+% Figure windows are numbered figBase + 1, 2, ...; set per dataset below
+% so running several datasets in one session keeps every run's figures open.
+cfg.figBase        = 0;
 
+override = struct();
 if exist('cfgOverride', 'var') && isstruct(cfgOverride)
-    fn = fieldnames(cfgOverride);
-    for i = 1:numel(fn)
-        cfg.(fn{i}) = cfgOverride.(fn{i});
-    end
+    override = cfgOverride;
+end
+if isfield(override, 'dataset')
+    cfg.dataset = override.dataset;
+end
+assert(any(strcmp(cfg.dataset, {'tibetan', 'digits_printed', 'digits_mnist'})), ...
+    'Unknown cfg.dataset "%s".', cfg.dataset);
+isDigits = startsWith(cfg.dataset, 'digits');
+if isDigits
+    % Thousands of images instead of 853: fewer AE epochs still give more
+    % updates, and bigger contrastive batches give NT-Xent more negatives.
+    cfg.convEpochs = 30;
+    cfg.contrastBatch = 256;
+    cfg.figBase = 100 * (1 + strcmp(cfg.dataset, 'digits_mnist'));
+end
+fn = fieldnames(override);
+for i = 1:numel(fn)
+    cfg.(fn{i}) = override.(fn{i});
 end
 if cfg.quick
     cfg.fcEpochs = 3;
     cfg.convEpochs = 3;
     cfg.contrastEpochs = 2;
     cfg.fcMaxSamples = 500;
+    cfg.maxSamples = min(cfg.maxSamples, 2000);
 end
 assert(cfg.imgSize == 32, 'The conv autoencoder decoder is built for 32x32 inputs.');
+assert(any(strcmp(cfg.bottleneck, {'gap', 'grid2'})), 'Unknown cfg.bottleneck "%s".', cfg.bottleneck);
+assert(cfg.labelsPerClass == 0 || isDigits, 'cfg.labelsPerClass needs a labeled (digit) dataset.');
 
 projDir = fileparts(mfilename('fullpath'));
 cd(projDir);
 addpath(projDir);
 
 stamp = string(datetime('now', 'Format', 'yyyyMMdd_HHmmss'));
+if isDigits
+    stamp = stamp + "_" + cfg.dataset;
+end
+if ~strcmp(cfg.bottleneck, 'grid2')
+    stamp = stamp + "_" + cfg.bottleneck;
+end
+if cfg.labelsPerClass > 0
+    stamp = stamp + sprintf("_L%d", cfg.labelsPerClass);
+end
+if cfg.seed ~= 1
+    stamp = stamp + sprintf("_s%d", cfg.seed);
+end
 if cfg.quick
     stamp = stamp + "_quick";
 end
@@ -73,55 +136,72 @@ try
 catch
 end
 
-close all;
 rng(cfg.seed);
 if useGPU
     gpurng(cfg.seed);
 end
 timings = struct();
-fprintf('=== Tibetan glyph pipeline | %s | quick=%d | GPU=%d ===\n', stamp, cfg.quick, useGPU);
+fprintf('=== Glyph pipeline | %s | dataset=%s | bottleneck=%s | labelsPerClass=%d | quick=%d | GPU=%d ===\n', ...
+    stamp, cfg.dataset, cfg.bottleneck, cfg.labelsPerClass, cfg.quick, useGPU);
 fprintf('Results folder: %s\n', outDir);
 
-%% 1. Segmentation
+%% 1. Data: page segmentation (Tibetan) or digit dataset preparation
 t0 = tic;
-cleanImage = fullfile(projDir, 'printed_transcription_test.png');
-assert(isfile(cleanImage), ['Missing %s. It is a screenshot of the live Adarshah ' ...
-    'reader (TILO1, folio 1-1-1b text) and must be copied over with the project.'], cleanImage);
+switch cfg.dataset
+    case 'tibetan'
+        cleanImage = fullfile(projDir, 'printed_transcription_test.png');
+        assert(isfile(cleanImage), ['Missing %s. It is a screenshot of the live Adarshah ' ...
+            'reader (TILO1, folio 1-1-1b text) and must be copied over with the project.'], cleanImage);
 
-scanList = dir(fullfile(projDir, 'samples_adarshah', '*.jpg'));
-scanPages = [{fullfile(projDir, '1-1-2b.jpg')}, fullfile({scanList.folder}, {scanList.name})];
-scanOutDirs = [{fullfile(projDir, '1-1-2b_crops')}, ...
-    cellfun(@(n) fullfile(projDir, 'samples_adarshah_crops', erase(n, '.jpg')), {scanList.name}, 'UniformOutput', false)];
-cleanOutDir = fullfile(projDir, 'printed_transcription_crops');
+        scanList = dir(fullfile(projDir, 'samples_adarshah', '*.jpg'));
+        scanPages = [{fullfile(projDir, '1-1-2b.jpg')}, fullfile({scanList.folder}, {scanList.name})];
+        scanOutDirs = [{fullfile(projDir, '1-1-2b_crops')}, ...
+            cellfun(@(n) fullfile(projDir, 'samples_adarshah_crops', erase(n, '.jpg')), {scanList.name}, 'UniformOutput', false)];
+        cleanOutDir = fullfile(projDir, 'printed_transcription_crops');
 
-if cfg.resegment
-    % Wipe old crops first: crop filenames encode line/position, so a run
-    % that finds a different count would otherwise leave stale files behind.
-    for d = [scanOutDirs, {cleanOutDir}]
-        if isfolder(d{1})
-            rmdir(d{1}, 's');
+        if cfg.resegment
+            % Wipe old crops first: crop filenames encode line/position, so a run
+            % that finds a different count would otherwise leave stale files behind.
+            for d = [scanOutDirs, {cleanOutDir}]
+                if isfolder(d{1})
+                    rmdir(d{1}, 's');
+                end
+            end
+            nScanCrops = 0;
+            for i = 1:numel(scanPages)
+                r = segment_page(scanPages{i}, 'OutputDir', scanOutDirs{i});
+                fprintf('  %-40s %5d crops\n', scanPages{i}(numel(projDir)+2:end), numel(r));
+                nScanCrops = nScanCrops + numel(r);
+            end
+            rClean = segment_page(cleanImage, 'OutputDir', cleanOutDir);
+            fprintf('  %-40s %5d crops, %d lines\n', 'printed_transcription_test.png', numel(rClean), max([rClean.Line]));
+            fprintf('  total scan crops: %d\n', nScanCrops);
+        else
+            assert(all(cellfun(@isfolder, [scanOutDirs, {cleanOutDir}])), ...
+                'cfg.resegment=false but crop folders are missing; run with resegment=true once.');
+            fprintf('  reusing existing crop folders\n');
         end
-    end
-    nScanCrops = 0;
-    for i = 1:numel(scanPages)
-        r = segment_page(scanPages{i}, 'OutputDir', scanOutDirs{i});
-        fprintf('  %-40s %5d crops\n', scanPages{i}(numel(projDir)+2:end), numel(r));
-        nScanCrops = nScanCrops + numel(r);
-    end
-    rClean = segment_page(cleanImage, 'OutputDir', cleanOutDir);
-    fprintf('  %-40s %5d crops, %d lines\n', 'printed_transcription_test.png', numel(rClean), max([rClean.Line]));
-    fprintf('  total scan crops: %d\n', nScanCrops);
-else
-    assert(all(cellfun(@isfolder, [scanOutDirs, {cleanOutDir}])), ...
-        'cfg.resegment=false but crop folders are missing; run with resegment=true once.');
-    fprintf('  reusing existing crop folders\n');
+        dataDir = cleanOutDir;
+        dataTitle = 'Clean printed Tibetan text';
+    case 'digits_printed'
+        dataDir = fullfile(projDir, 'digits', 'printed');
+        if ~isfolder(dataDir)
+            make_printed_digits(dataDir);
+        end
+        dataTitle = 'Printed digits (installed fonts)';
+    case 'digits_mnist'
+        dataDir = fullfile(projDir, 'digits', 'mnist');
+        if ~isfolder(dataDir)
+            make_mnist_digits(dataDir, fullfile(projDir, 'digits', 'raw'), "test");
+        end
+        dataTitle = 'Handwritten digits (MNIST test set)';
 end
-timings.segmentation = toc(t0);
+timings.data = toc(t0);
 
 %% 2. Baseline: fully-connected ReLU+BN autoencoder on scan crops
 sz = cfg.imgSize;
 netFC = [];
-if cfg.runFCBaseline
+if cfg.runFCBaseline && strcmp(cfg.dataset, 'tibetan')
     t0 = tic;
     [Xn, ~] = load_crop_dataset({fullfile(projDir, '1-1-2b_crops'), fullfile(projDir, 'samples_adarshah_crops')}, sz, cfg.fcMaxSamples);
     Xn = Xn';
@@ -138,9 +218,13 @@ if cfg.runFCBaseline
     fprintf('Stage 2: FC baseline trained on %d scan crops, recon MSE=%.5f (%.0fs)\n', size(Xn, 1), mseFC, timings.fcBaseline);
 end
 
-%% 3. Convolutional autoencoder on clean crops
+%% 3. Convolutional autoencoder on clean crops / digits
 t0 = tic;
-[Xp, metaP] = load_crop_dataset({cleanOutDir}, sz, Inf);
+[Xp, metaP] = load_crop_dataset({dataDir}, sz, cfg.maxSamples);
+labels = [];
+if isDigits
+    labels = folder_labels(metaP);
+end
 imgs = reshape(Xp, sz, sz, 1, []);
 if useGPU
     imgs = gpuArray(imgs);
@@ -148,18 +232,18 @@ end
 convOpts = trainingOptions('adam', ...
     'MaxEpochs', cfg.convEpochs, 'MiniBatchSize', 64, 'InitialLearnRate', 2e-3, ...
     'Shuffle', 'every-epoch', 'Verbose', false, 'Plots', 'none');
-[netConvT, infoConv] = trainnet(imgs, imgs, build_conv_autoencoder(sz), "mse", convOpts);
+[netConvT, infoConv] = trainnet(imgs, imgs, build_conv_autoencoder(sz, cfg.bottleneck), "mse", convOpts);
 mseConv = gather(mean((predict(netConvT, imgs) - imgs).^2, 'all'));
 timings.convAE = toc(t0);
-fprintf('Stage 3: conv AE trained on %d clean crops, recon MSE=%.5f (%.0fs)\n', size(imgs, 4), mseConv, timings.convAE);
+fprintf('Stage 3: conv AE trained on %d images (%s), recon MSE=%.5f (%.0fs)\n', size(imgs, 4), dataTitle, mseConv, timings.convAE);
 
-figure(1);
+f = open_figure(cfg, 1, 'conv AE loss');
 hConv = infoConv.TrainingHistory;
 plot(hConv.Iteration, hConv.Loss, 'Color', [0.7 0.7 0.7]); hold on;
 plot(hConv.Iteration, movmean(hConv.Loss, 25), 'r-', 'LineWidth', 2); hold off;
 xlabel('Iteration'); ylabel('MSE'); grid on;
 title('Conv autoencoder reconstruction loss');
-exportgraphics(figure(1), fullfile(outDir, 'fig1_conv_ae_loss.png'), 'Resolution', 150);
+exportgraphics(f, fullfile(outDir, 'fig1_conv_ae_loss.png'), 'Resolution', 150);
 
 %% 4. Contrastive fine-tuning of the conv encoder
 t0 = tic;
@@ -176,6 +260,28 @@ end
 
 nSamples = size(imgs, 4);
 numBatches = floor(nSamples / cfg.contrastBatch);
+
+% Known labels for the semi-supervised variant: -1 = unknown. A small
+% labeled pool would rarely put two same-class samples in one random batch,
+% so every batch also gets cfg.labeledPerBatch draws from the pool.
+knownLabel = -ones(1, nSamples, 'single');
+labeledIdx = zeros(0, 1);
+if cfg.labelsPerClass > 0
+    rng(cfg.seed + 1);
+    for c = unique(labels)'
+        members = find(labels == c);
+        pick = members(randperm(numel(members), min(cfg.labelsPerClass, numel(members))));
+        labeledIdx = [labeledIdx; pick(:)]; %#ok<AGROW>
+    end
+    knownLabel(labeledIdx) = labels(labeledIdx);
+    fprintf('Stage 4: %d labeled samples (%d per class), %d added to each batch of %d\n', ...
+        numel(labeledIdx), cfg.labelsPerClass, cfg.labeledPerBatch, cfg.contrastBatch);
+end
+lossName = 'NT-Xent';
+if ~isempty(labeledIdx)
+    lossName = 'SupCon';
+end
+
 avgGrad = [];
 avgSqGrad = [];
 iteration = 0;
@@ -186,9 +292,14 @@ for epoch = 1:cfg.contrastEpochs
     batchLoss = zeros(numBatches, 1, 'like', imgs);
     for b = 1:numBatches
         idx = order((b - 1) * cfg.contrastBatch + 1 : b * cfg.contrastBatch);
+        batchLabels = [];
+        if ~isempty(labeledIdx)
+            idx = [idx, labeledIdx(randi(numel(labeledIdx), 1, cfg.labeledPerBatch))']; %#ok<AGROW>
+            batchLabels = knownLabel(idx);
+        end
         dlXb = dlarray(make_contrastive_batch_img(imgs, idx), 'SSCB');
         iteration = iteration + 1;
-        [loss, gradients, state] = dlfeval(@contrastive_model_loss, netCC, dlXb, cfg.tau);
+        [loss, gradients, state] = dlfeval(@contrastive_model_loss, netCC, dlXb, cfg.tau, batchLabels);
         netCC.State = state;
         [netCC, avgGrad, avgSqGrad] = adamupdate(netCC, gradients, avgGrad, avgSqGrad, iteration, cfg.contrastLR);
         batchLoss(b) = extractdata(loss);
@@ -201,17 +312,18 @@ end
 timings.contrastive = toc(t0);
 fprintf('Stage 4: contrastive fine-tuning done, final loss=%.4f (%.0fs)\n', contrastLoss(end), timings.contrastive);
 
-figure(2);
+f = open_figure(cfg, 2, 'contrastive loss');
 plot(1:cfg.contrastEpochs, contrastLoss, 'o-', 'LineWidth', 1.5);
-xlabel('Epoch'); ylabel('mean NT-Xent loss'); grid on;
-title('Contrastive fine-tuning loss (conv encoder)');
-exportgraphics(figure(2), fullfile(outDir, 'fig2_contrastive_loss.png'), 'Resolution', 150);
+xlabel('Epoch'); ylabel(['mean ' lossName ' loss']); grid on;
+title(sprintf('Contrastive fine-tuning loss (conv encoder, %s bottleneck)', cfg.bottleneck));
+exportgraphics(f, fullfile(outDir, 'fig2_contrastive_loss.png'), 'Resolution', 150);
 
 %% 5. Shift/scale invariance of each model
 t0 = tic;
-% Encoders map an sz x sz x 1 x B image batch to D x B features.
-encodeConv = @(net) @(X) squeeze(predict(net, X, 'Outputs', 'bottleneck'));
-models = {'Conv AE (recon only)', encodeConv(netConvT); 'Conv + contrastive (netCC)', encodeConv(netCC)};
+% Encoders map an sz x sz x 1 x B image batch to D x B features; the
+% reshape flattens a 'grid2' bottleneck's 2x2x32 map.
+embed = @(net, X) reshape(predict(net, X, 'Outputs', 'bottleneck'), [], size(X, 4));
+models = {'Conv AE (recon only)', @(X) embed(netConvT, X); 'Conv + contrastive (netCC)', @(X) embed(netCC, X)};
 if ~isempty(netFC)
     encodeFC = @(X) predict(netFC, reshape(X, sz * sz, [])', 'Outputs', 'bottleneck')';
     models = [{'FC ReLU+BN (baseline)', encodeFC}; models];
@@ -232,34 +344,92 @@ end
 %% 6. t-SNE of netCC features + densest-cluster montages
 t0 = tic;
 % tsne has no gpuArray support; it runs on the CPU in single.
-fCC = gather(squeeze(predict(netCC, imgs, 'Outputs', 'bottleneck')));
+fCC = gather(embed(netCC, imgs));
 rng(0);
 Ycc = tsne(fCC', 'Perplexity', 30);
-render_tsne_canvas(Ycc, metaP, struct('FigNum', 3, 'Title', 'Clean printed text: conv encoder + contrastive (netCC)'));
-exportgraphics(figure(3), fullfile(outDir, 'fig3_tsne_netCC.png'), 'Resolution', 200);
+f = open_figure(cfg, 3, 't-SNE');
+render_tsne_canvas(Ycc, metaP, struct('FigNum', f.Number, 'Title', [dataTitle ': conv encoder + contrastive (netCC)']));
+exportgraphics(f, fullfile(outDir, 'fig3_tsne_netCC.png'), 'Resolution', 200);
 
 regions = find_dense_regions(Ycc, cfg.numClusterMontages);
 for r = 1:numel(regions)
     members = regions{r}(1:min(16, numel(regions{r})));
     thumbs = cellfun(@(p) imresize(imread(p), [70 70]), {metaP(members).Path}, 'UniformOutput', false);
     figNum = 3 + r;
-    figure(figNum);
+    f = open_figure(cfg, figNum, sprintf('cluster %d', r));
     montage(thumbs, 'BorderSize', [3 3], 'BackgroundColor', 'white');
     title(sprintf('Densest t-SNE cluster #%d (%d members, %d shown)', r, numel(regions{r}), numel(members)));
-    exportgraphics(figure(figNum), fullfile(outDir, sprintf('fig%d_cluster%d.png', figNum, r)), 'Resolution', 150);
+    exportgraphics(f, fullfile(outDir, sprintf('fig%d_cluster%d.png', figNum, r)), 'Resolution', 150);
 end
 timings.tsne = toc(t0);
 fprintf('Stage 6: t-SNE + %d cluster montages (%.0fs)\n', numel(regions), timings.tsne);
 
+labelMetrics = struct('features', {}, 'knnAcc', {}, 'kmeansPurity', {}, 'kmeansNMI', {}, 'zeroCluster', {});
+if isDigits
+    t0 = tic;
+    figNum = 4 + numel(regions);
+    f = open_figure(cfg, figNum, 't-SNE by true digit');
+    % Darkened so the light turbo colors (yellow-green) stay readable as thin ink on white.
+    digitColors = single(turbo(10)) * 0.85;
+    % Icons large enough to read overlap into solid blobs beyond a few thousand points.
+    maxShown = 3000;
+    shown = 1:numel(labels);
+    if numel(shown) > maxShown
+        rng(0);
+        shown = sort(randperm(numel(labels), maxShown));
+    end
+    canvasRGB = render_tsne_canvas(Ycc(shown, :), metaP(shown), struct('FigNum', f.Number, ...
+        'Images', gather(imgs(:, :, :, shown)), 'Colors', digitColors(labels(shown) + 1, :), ...
+        'Canvas', 1600, 'Thumb', 24, 'Title', {{[dataTitle ': t-SNE of netCC features'], ... % {{}}: struct() would turn a plain cell into a struct array
+        sprintf('ink colored by true digit (%d of %d shown)', numel(shown), numel(labels))}}));
+    hold on;
+    for d = 0:9
+        plot(NaN, NaN, 's', 'MarkerSize', 10, 'MarkerFaceColor', digitColors(d + 1, :), ...
+            'MarkerEdgeColor', 'none', 'DisplayName', num2str(d));
+    end
+    hold off;
+    legend('Location', 'eastoutside');
+    exportgraphics(f, fullfile(outDir, sprintf('fig%d_tsne_true_labels.png', figNum)), 'Resolution', 200);
+    imwrite(canvasRGB, fullfile(outDir, sprintf('fig%d_tsne_true_labels_full.png', figNum)));
+
+    % Raw pixels are taken ink-positive so cosine similarity isn't dominated by the shared white background.
+    % Samples whose labels training saw are left out of the scores.
+    evalSet = true(numel(labels), 1);
+    evalSet(labeledIdx) = false;
+    evalLabels = labels(evalSet);
+    featSets = {
+        'Raw pixels (baseline)', reshape(1 - imgs(:, :, :, evalSet), sz * sz, [])
+        'Conv AE (recon only)', embed(netConvT, imgs(:, :, :, evalSet))
+        'Conv + contrastive (netCC)', embed(netCC, imgs(:, :, :, evalSet))
+        };
+    for m = 1:size(featSets, 1)
+        [acc, pur, nmi, cl] = label_metrics(featSets{m, 2}, evalLabels, cfg.knnK, 10);
+        % The K-means cluster holding the most 0s: [0s, 6s, 9s, other digits] in it.
+        inZero = cl == mode(cl(evalLabels == 0));
+        zeroCluster = [nnz(inZero & evalLabels == 0), nnz(inZero & evalLabels == 6), ...
+            nnz(inZero & evalLabels == 9), nnz(inZero & ~ismember(evalLabels, [0 6 9]))];
+        labelMetrics(end + 1) = struct('features', featSets{m, 1}, 'knnAcc', acc, ... %#ok<SAGROW>
+            'kmeansPurity', pur, 'kmeansNMI', nmi, 'zeroCluster', zeroCluster);
+    end
+    timings.labelMetrics = toc(t0);
+    fprintf(['Stage 6b: label scores on %d unlabeled samples (%d-NN leave-one-out accuracy | K-means k=10 purity / NMI | ' ...
+        'cluster holding most 0s: 0s/6s/9s/other) (%.0fs)\n'], nnz(evalSet), cfg.knnK, timings.labelMetrics);
+    for m = 1:numel(labelMetrics)
+        fprintf('  %-28s kNN %.3f   purity %.3f   NMI %.3f   0-cluster %d/%d/%d/%d\n', labelMetrics(m).features, ...
+            labelMetrics(m).knnAcc, labelMetrics(m).kmeansPurity, labelMetrics(m).kmeansNMI, labelMetrics(m).zeroCluster);
+    end
+end
+
 %% 7. Summary
 % Gathered so models.mat also loads on a machine without a GPU.
 netCC = to_device(netCC, @gather);
-save(fullfile(outDir, 'models.mat'), 'netFC', 'netConvT', 'netCC', 'fCC', 'Ycc', 'metaP', ...
-    'invariance', 'contrastLoss', 'cfg', 'timings', '-v7.3');
+save(fullfile(outDir, 'models.mat'), 'netFC', 'netConvT', 'netCC', 'fCC', 'Ycc', 'metaP', 'labels', 'labeledIdx', ...
+    'invariance', 'labelMetrics', 'contrastLoss', 'cfg', 'timings', '-v7.3');
 
 fid = fopen(fullfile(outDir, 'metrics.txt'), 'w');
-fprintf(fid, 'Tibetan glyph pipeline run %s (quick=%d, GPU=%d)\n\n', stamp, cfg.quick, useGPU);
-fprintf(fid, 'Clean crops: %d   Conv AE recon MSE: %.5f\n', size(imgs, 4), mseConv);
+fprintf(fid, 'Glyph pipeline run %s, dataset %s, bottleneck %s, labelsPerClass %d (quick=%d, GPU=%d)\n\n', ...
+    stamp, cfg.dataset, cfg.bottleneck, cfg.labelsPerClass, cfg.quick, useGPU);
+fprintf(fid, '%s: %d images   Conv AE recon MSE: %.5f\n', dataTitle, size(imgs, 4), mseConv);
 if ~isempty(netFC)
     fprintf(fid, 'FC baseline recon MSE: %.5f\n', mseFC);
 end
@@ -269,6 +439,15 @@ fprintf(fid, '%-28s %10s %10s %10s %10s\n', 'model', 'shiftMean', 'shiftWorst', 
 for m = 1:numel(invariance)
     fprintf(fid, '%-28s %10.3f %10.3f %10.3f %10.3f\n', invariance(m).model, ...
         invariance(m).shiftMean, invariance(m).shiftWorst, invariance(m).scaleMean, invariance(m).scaleWorst);
+end
+if ~isempty(labelMetrics)
+    fprintf(fid, ['\nLabel scores on the %d samples not labeled for training: %d-NN leave-one-out accuracy (cosine), ' ...
+        'K-means k=10 purity and NMI,\nand the contents of the K-means cluster holding the most 0s\n'], nnz(evalSet), cfg.knnK);
+    fprintf(fid, '%-28s %10s %10s %10s %8s %8s %8s %8s\n', 'features', 'kNN', 'purity', 'NMI', 'zc 0s', 'zc 6s', 'zc 9s', 'zc other');
+    for m = 1:numel(labelMetrics)
+        fprintf(fid, '%-28s %10.3f %10.3f %10.3f %8d %8d %8d %8d\n', labelMetrics(m).features, ...
+            labelMetrics(m).knnAcc, labelMetrics(m).kmeansPurity, labelMetrics(m).kmeansNMI, labelMetrics(m).zeroCluster);
+    end
 end
 fprintf(fid, '\nStage timings (s):\n');
 tf = fieldnames(timings);
@@ -281,12 +460,27 @@ fprintf('=== Done. Metrics, figures, models.mat and run_log.txt are in:\n    %s\
 diary off;
 
 %% Local functions
+function f = open_figure(cfg, n, name)
+% Figure n of this run: window number cfg.figBase + n, cleared so a rerun
+% of the same dataset redraws it instead of drawing on top of it.
+f = figure(cfg.figBase + n);
+clf(f);
+f.Name = sprintf('%s | fig%d %s', cfg.dataset, n, name);
+end
+
 function net = to_device(net, fn)
 % Move a dlnetwork's learnables and state (e.g. batchnorm statistics),
 % which dlupdate on the network alone leaves behind, with fn = @gpuArray
 % or @gather.
 net = dlupdate(fn, net);
 net.State = dlupdate(fn, net.State);
+end
+
+function labels = folder_labels(meta)
+% Digit datasets are stored as <root>/<label>/<file>.png.
+[~, names] = cellfun(@(p) fileparts(fileparts(p)), {meta.Path}, 'UniformOutput', false);
+labels = single(str2double(names))';
+assert(~any(isnan(labels)), 'Could not parse a digit label from every parent folder name.');
 end
 
 function net = build_fc_autoencoder(nIn)
@@ -313,7 +507,17 @@ layers = [
 net = dlnetwork(layers);
 end
 
-function net = build_conv_autoencoder(sz)
+function net = build_conv_autoencoder(sz, bottleneck)
+% Encoder ends in an 8x8x32 map; the bottleneck pools it to 1x1 ('gap') or
+% 2x2 ('grid2'), and tconv1 upsamples either back to 4x4.
+switch bottleneck
+    case 'gap'
+        pool = globalAveragePooling2dLayer('Name', 'bottleneck');
+        tconv1 = transposedConv2dLayer(4, 32, 'Stride', 4, 'Name', 'tconv1');
+    case 'grid2'
+        pool = averagePooling2dLayer(4, 'Stride', 4, 'Name', 'bottleneck');
+        tconv1 = transposedConv2dLayer(2, 32, 'Stride', 2, 'Name', 'tconv1');
+end
 layers = [
     imageInputLayer([sz sz 1], 'Normalization', 'none', 'Name', 'input')
     convolution2dLayer(3, 16, 'Padding', 'same', 'Name', 'conv1')
@@ -327,8 +531,8 @@ layers = [
     convolution2dLayer(3, 32, 'Padding', 'same', 'Name', 'conv3')
     batchNormalizationLayer('Name', 'bn3')
     reluLayer('Name', 'relu3')
-    globalAveragePooling2dLayer('Name', 'bottleneck')
-    transposedConv2dLayer(4, 32, 'Stride', 4, 'Name', 'tconv1')
+    pool
+    tconv1
     batchNormalizationLayer('Name', 'bn4')
     reluLayer('Name', 'relu4')
     transposedConv2dLayer(2, 32, 'Stride', 2, 'Name', 'tconv2')
